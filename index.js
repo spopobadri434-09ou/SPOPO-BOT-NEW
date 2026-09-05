@@ -8,7 +8,7 @@ const P = require("pino");
 const fs = require("fs");
 
 const PREFIX = ".";
-const BOT_NUMBER = process.env.BOT_NUMBER || "";
+const BOT_NUMBER = process.env.BOT_NUMBER ||212644140800 "";
 const OWNER_NUMBER = process.env.OWNER_NUMBER || BOT_NUMBER;
 const AUTH_DIR = "./auth_info";
 const DATA_FILE = "./data.json";
