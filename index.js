@@ -1,31 +1,34 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  Browsers
+  Browsers,
+  delay
 } from "@whiskeysockets/baileys";
 
 import P from "pino";
 import fs from "fs";
+import path from "path";
 import http from "http";
 
 // =====================================================
-// CONFIG
+// SPOPO BOT
+// Railway + WhatsApp Pairing Code
 // =====================================================
+
+// ================= CONFIG =================
 
 const BOT_NUMBER = "212644140800";
 const OWNER_NUMBER = "212644140800";
 
 const PREFIX = ".";
+
 const SESSION_DIR = "./session";
 const DATA_DIR = "./data";
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+
 const PORT = process.env.PORT || 3000;
 
-const logger = P({ level: "silent" });
-
-// =====================================================
-// FOLDERS
-// =====================================================
+// ================= DIRECTORIES =================
 
 if (!fs.existsSync(SESSION_DIR)) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -35,34 +38,111 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// =====================================================
-// DATABASE
-// =====================================================
+if (!fs.existsSync(USERS_FILE)) {
+  fs.writeFileSync(USERS_FILE, "{}", "utf8");
+}
 
-const usersFile = `${DATA_DIR}/users.json`;
+// ================= HTTP SERVER =================
 
-let users = {};
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8"
+  });
 
-try {
-  if (fs.existsSync(usersFile)) {
-    users = JSON.parse(
-      fs.readFileSync(usersFile, "utf8")
-    );
+  res.end("SPOPO BOT ONLINE");
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🌐 Server running on port ${PORT}`);
+});
+
+// ================= DATABASE =================
+
+function loadUsers() {
+  try {
+    if (!fs.existsSync(USERS_FILE)) {
+      fs.writeFileSync(USERS_FILE, "{}", "utf8");
+    }
+
+    const data = fs.readFileSync(USERS_FILE, "utf8");
+
+    if (!data.trim()) return {};
+
+    return JSON.parse(data);
+  } catch (error) {
+    console.log("⚠️ خطأ في قراءة users.json");
+    return {};
   }
-} catch {
-  users = {};
 }
 
-function saveUsers() {
-  fs.writeFileSync(
-    usersFile,
-    JSON.stringify(users, null, 2)
-  );
+function saveUsers(users) {
+  try {
+    fs.writeFileSync(
+      USERS_FILE,
+      JSON.stringify(users, null, 2),
+      "utf8"
+    );
+  } catch (error) {
+    console.log("❌ خطأ في حفظ البيانات:", error.message);
+  }
 }
 
-// =====================================================
-// RANKS
-// =====================================================
+// ================= USERS =================
+
+function ensureUser(jid) {
+  const users = loadUsers();
+
+  if (!users[jid]) {
+    users[jid] = {
+      coins: 100,
+      xp: 0,
+      level: 1,
+      rank: "citizen",
+      inventory: {
+        vip: 0,
+        gift: 0,
+        armor: 0,
+        diamond: 0
+      }
+    };
+
+    saveUsers(users);
+  }
+
+  return users[jid];
+}
+
+function getUser(jid) {
+  return ensureUser(jid);
+}
+
+function updateUser(jid, data) {
+  const users = loadUsers();
+
+  if (!users[jid]) {
+    users[jid] = {
+      coins: 100,
+      xp: 0,
+      level: 1,
+      rank: "citizen",
+      inventory: {
+        vip: 0,
+        gift: 0,
+        armor: 0,
+        diamond: 0
+      }
+    };
+  }
+
+  users[jid] = {
+    ...users[jid],
+    ...data
+  };
+
+  saveUsers(users);
+}
+
+// ================= RANKS =================
 
 const RANKS = {
   citizen: {
@@ -96,1544 +176,1609 @@ const RANKS = {
   }
 };
 
-function getUser(jid) {
-  const number = jid.split("@")[0];
-
-  if (!users[number]) {
-    users[number] = {
-      coins: 100,
-      rank:
-        number === OWNER_NUMBER
-          ? "owner"
-          : "citizen",
-      inventory: {},
-      lastDaily: 0
-    };
-
-    saveUsers();
-  }
-
-  return users[number];
+function rankName(rank) {
+  return RANKS[rank]?.name || "مواطن";
 }
 
 function rankLevel(rank) {
   return RANKS[rank]?.level || 1;
 }
 
-function rankName(rank) {
-  return RANKS[rank]?.name || "مواطن";
+// ================= NORMALIZE JID =================
+
+function normalizeNumber(jid = "") {
+  return jid
+    .split(":")[0]
+    .replace("@s.whatsapp.net", "")
+    .replace("@c.us", "");
 }
 
-function hasRank(jid, rank) {
-  const number = jid.split("@")[0];
+function isOwner(jid) {
+  return normalizeNumber(jid) === BOT_NUMBER ||
+         normalizeNumber(jid) === OWNER_NUMBER;
+}
 
-  if (number === OWNER_NUMBER) {
-    return true;
+function hasRank(jid, requiredLevel) {
+  if (isOwner(jid)) return true;
+
+  const user = getUser(jid);
+
+  return rankLevel(user.rank) >= requiredLevel;
+}
+
+// ================= GROUP ADMIN =================
+
+async function isGroupAdmin(sock, jid, groupMetadata) {
+  if (isOwner(jid)) return true;
+
+  const participant = groupMetadata.participants.find(
+    p => normalizeNumber(p.id) === normalizeNumber(jid)
+  );
+
+  return participant?.admin === "admin" ||
+         participant?.admin === "superadmin";
+}
+
+async function getGroupMetadata(sock, jid) {
+  try {
+    return await sock.groupMetadata(jid);
+  } catch (error) {
+    return null;
   }
+}
 
+// ================= MENTION =================
+
+function extractMention(message) {
+  const context =
+    message?.extendedTextMessage?.contextInfo;
+
+  if (!context) return [];
+
+  return context.mentionedJid || [];
+}
+
+function quotedParticipant(message) {
   return (
-    rankLevel(getUser(jid).rank) >=
-    rankLevel(rank)
+    message?.extendedTextMessage?.contextInfo
+      ?.participant || null
   );
 }
 
-// =====================================================
-// SHOP
-// =====================================================
+// ================= SHOP =================
 
 const SHOP = {
   vip: {
-    name: "⭐ مميز",
-    price: 500,
-    rank: "vip"
+    price: 1000,
+    name: "⭐ مميز"
   },
 
   gift: {
-    name: "🎁 هدية",
-    price: 150
+    price: 250,
+    name: "🎁 هدية"
   },
 
   armor: {
-    name: "🛡️ درع",
-    price: 250
+    price: 500,
+    name: "🛡️ درع"
   },
 
   diamond: {
-    name: "💎 ألماسة",
-    price: 1000
+    price: 2500,
+    name: "💎 ألماسة"
   }
 };
 
-// =====================================================
-// HELPERS
-// =====================================================
+// ================= DAILY =================
 
-function isGroup(jid) {
-  return jid?.endsWith("@g.us");
-}
+const dailyCooldown = new Map();
 
-function getText(message) {
-  const m = message.message;
+// ================= COMMAND HELPER =================
 
-  if (!m) return "";
-
+function commandText(message) {
   return (
-    m.conversation ||
-    m.extendedTextMessage?.text ||
-    m.imageMessage?.caption ||
-    m.videoMessage?.caption ||
+    message?.conversation ||
+    message?.extendedTextMessage?.text ||
+    message?.imageMessage?.caption ||
+    message?.videoMessage?.caption ||
     ""
   ).trim();
 }
 
-function getSender(message) {
-  return (
-    message.key.participant ||
-    message.key.remoteJid ||
-    ""
-  );
-}
-
-function getMentions(message) {
-  return (
-    message.message
-      ?.extendedTextMessage
-      ?.contextInfo
-      ?.mentionedJid || []
-  );
-}
-
-function getTarget(message, args) {
-  const mentions = getMentions(message);
-
-  if (mentions.length > 0) {
-    return mentions[0];
-  }
-
-  const quoted =
-    message.message
-      ?.extendedTextMessage
-      ?.contextInfo
-      ?.participant;
-
-  if (quoted) {
-    return quoted;
-  }
-
-  const number = args[0]?.replace(/\D/g, "");
-
-  if (number) {
-    return `${number}@s.whatsapp.net`;
-  }
-
-  return null;
-}
+// ================= SEND =================
 
 async function reply(sock, jid, text, message) {
-  return sock.sendMessage(
-    jid,
-    { text },
-    { quoted: message }
-  );
-}
-
-async function isAdmin(sock, group, jid) {
   try {
-    const metadata =
-      await sock.groupMetadata(group);
-
-    const member =
-      metadata.participants.find(
-        p => p.id === jid
-      );
-
-    return (
-      member?.admin === "admin" ||
-      member?.admin === "superadmin"
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function botAdmin(sock, group) {
-  if (!sock.user?.id) return false;
-
-  return isAdmin(
-    sock,
-    group,
-    sock.user.id
-  );
-}
-
-// =====================================================
-// COMMAND HANDLER
-// =====================================================
-
-async function handleCommand(sock, message) {
-  const jid = message.key.remoteJid;
-
-  if (!jid) return;
-
-  const text = getText(message);
-
-  if (!text.startsWith(PREFIX)) {
-    return;
-  }
-
-  const sender = getSender(message);
-
-  const content =
-    text.slice(PREFIX.length).trim();
-
-  const parts = content.split(/\s+/);
-
-  const command =
-    parts.shift()?.toLowerCase();
-
-  const args = parts;
-
-  if (!command) return;
-
-  const user = getUser(sender);
-
-  // ===================================================
-  // MENU
-  // ===================================================
-
-  if (
-    command === "menu" ||
-    command === "help" ||
-    command === "اوامر"
-  ) {
-    return reply(
-      sock,
-      jid,
-      `╭━━━〔 🤖 SPOPO BOT 〕━━━╮
-┃
-┃ 🔐 Pairing Code
-┃ 📱 212644140800
-┃
-┃ 👑 الرتب
-┃ .رتب
-┃ .ترقية @user
-┃ .تنزيل @user
-┃
-┃ 💰 الاقتصاد
-┃ .حسابي
-┃ .يومية
-┃ .متجر
-┃ .شراء vip
-┃ .مخزوني
-┃ .تحويل @user 100
-┃ .متصدرين
-┃
-┃ 👥 المجموعة
-┃ .معلومات
-┃ .منشن
-┃ .طرد @user
-┃ .اضف 2126xxxxxxx
-┃ .ترقية_ادمن @user
-┃ .تنزيل_ادمن @user
-┃ .اسم الاسم
-┃ .وصف الوصف
-┃ .رابط
-┃ .سحب_الرابط
-┃ .قفل
-┃ .فتح
-┃
-┃ 🛠️ عام
-┃ .بينغ
-┃ .بوت
-┃ .ايدي
-┃
-╰━━━━━━━━━━━━━━━━━━╯`,
-      message
-    );
-  }
-
-  // ===================================================
-  // PING
-  // ===================================================
-
-  if (
-    command === "ping" ||
-    command === "بينغ"
-  ) {
-    return reply(
-      sock,
-      jid,
-      "🏓 Pong!\n✅ SPOPO BOT خدام.",
-      message
-    );
-  }
-
-  // ===================================================
-  // BOT
-  // ===================================================
-
-  if (command === "bot") {
-    return reply(
-      sock,
-      jid,
-      `🤖 SPOPO BOT
-
-🟢 الحالة: Online
-🔐 النظام: Pairing Code
-📱 الرقم: 212644140800
-⚡ Prefix: .
-👑 الرتب: 6
-🛒 المتجر: مفعل`,
-      message
-    );
-  }
-
-  // ===================================================
-  // ID
-  // ===================================================
-
-  if (
-    command === "id" ||
-    command === "ايدي"
-  ) {
-    return reply(
-      sock,
-      jid,
-      `🆔 ID ديالك:
-
-${sender}`,
-      message
-    );
-  }
-
-  // ===================================================
-  // ACCOUNT
-  // ===================================================
-
-  if (
-    command === "حسابي" ||
-    command === "me"
-  ) {
-    return reply(
-      sock,
-      jid,
-      `👤 حسابك
-
-👑 الرتبة:
-${rankName(user.rank)}
-
-💰 العملات:
-${user.coins} 🪙
-
-🎒 العناصر:
-${Object.values(user.inventory)
-        .reduce((a, b) => a + b, 0)}`,
-      message
-    );
-  }
-
-  // ===================================================
-  // DAILY
-  // ===================================================
-
-  if (
-    command === "daily" ||
-    command === "يومية"
-  ) {
-    const now = Date.now();
-
-    if (
-      now - user.lastDaily <
-      86400000
-    ) {
-      return reply(
-        sock,
-        jid,
-        "⏳ استعمل اليومية مرة أخرى غداً.",
-        message
-      );
-    }
-
-    const reward =
-      Math.floor(Math.random() * 201) + 200;
-
-    user.coins += reward;
-    user.lastDaily = now;
-
-    saveUsers();
-
-    return reply(
-      sock,
-      jid,
-      `🎁 اليومية
-
-ربحتي:
-+${reward} 🪙
-
-💰 الرصيد:
-${user.coins} 🪙`,
-      message
-    );
-  }
-
-  // ===================================================
-  // SHOP
-  // ===================================================
-
-  if (
-    command === "shop" ||
-    command === "متجر"
-  ) {
-    return reply(
-      sock,
-      jid,
-      `🛒 متجر SPOPO
-
-⭐ vip
-💰 500 🪙
-
-🎁 gift
-💰 150 🪙
-
-🛡️ armor
-💰 250 🪙
-
-💎 diamond
-💰 1000 🪙
-
-للشراء:
-.شراء vip`,
-      message
-    );
-  }
-
-  // ===================================================
-  // BUY
-  // ===================================================
-
-  if (
-    command === "buy" ||
-    command === "شراء"
-  ) {
-    const item =
-      args[0]?.toLowerCase();
-
-    if (!item || !SHOP[item]) {
-      return reply(
-        sock,
-        jid,
-        "❌ المنتج غير موجود.\nاستعمل .متجر",
-        message
-      );
-    }
-
-    const product = SHOP[item];
-
-    if (user.coins < product.price) {
-      return reply(
-        sock,
-        jid,
-        `❌ رصيدك غير كافي.
-
-💰 عندك: ${user.coins}
-💵 الثمن: ${product.price}`,
-        message
-      );
-    }
-
-    if (
-      product.rank &&
-      rankLevel(user.rank) >=
-        rankLevel(product.rank)
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ عندك هاد الرتبة أو أعلى.",
-        message
-      );
-    }
-
-    user.coins -= product.price;
-
-    if (product.rank) {
-      user.rank = product.rank;
-    } else {
-      user.inventory[item] =
-        (user.inventory[item] || 0) + 1;
-    }
-
-    saveUsers();
-
-    return reply(
-      sock,
-      jid,
-      `✅ تمت عملية الشراء!
-
-🛍️ ${product.name}
-💰 الثمن: ${product.price} 🪙
-💵 الباقي: ${user.coins} 🪙`,
-      message
-    );
-  }
-
-  // ===================================================
-  // INVENTORY
-  // ===================================================
-
-  if (
-    command === "مخزوني" ||
-    command === "inventory"
-  ) {
-    const items =
-      Object.entries(user.inventory);
-
-    if (!items.length) {
-      return reply(
-        sock,
-        jid,
-        "🎒 المخزون فارغ.",
-        message
-      );
-    }
-
-    let result =
-      "🎒 مخزونك:\n\n";
-
-    for (
-      const [id, amount] of items
-    ) {
-      result +=
-        `• ${id}: ${amount}\n`;
-    }
-
-    return reply(
-      sock,
-      jid,
-      result,
-      message
-    );
-  }
-
-  // ===================================================
-  // TRANSFER
-  // ===================================================
-
-  if (
-    command === "تحويل" ||
-    command === "pay"
-  ) {
-    const target =
-      getTarget(message, args);
-
-    const amount = Number(
-      args.find(x =>
-        /^\d+$/.test(x)
-      )
-    );
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    if (
-      !Number.isInteger(amount) ||
-      amount <= 0
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ المبلغ غير صحيح.",
-        message
-      );
-    }
-
-    if (user.coins < amount) {
-      return reply(
-        sock,
-        jid,
-        "❌ ما عندكش رصيد كافي.",
-        message
-      );
-    }
-
-    const receiver =
-      getUser(target);
-
-    user.coins -= amount;
-    receiver.coins += amount;
-
-    saveUsers();
-
-    return reply(
-      sock,
-      jid,
-      `✅ التحويل ناجح!
-
-💸 المبلغ:
-${amount} 🪙
-
-👤 إلى:
-@${target.split("@")[0]}
-
-💰 رصيدك:
-${user.coins} 🪙`,
-      message
-    );
-  }
-
-  // ===================================================
-  // LEADERBOARD
-  // ===================================================
-
-  if (
-    command === "متصدرين" ||
-    command === "top"
-  ) {
-    const list =
-      Object.entries(users)
-        .sort(
-          (a, b) =>
-            b[1].coins - a[1].coins
-        )
-        .slice(0, 10);
-
-    let result =
-      "🏆 المتصدرين\n\n";
-
-    list.forEach(
-      ([number, data], i) => {
-        result +=
-          `${i + 1}. @${number}\n` +
-          `💰 ${data.coins} 🪙\n` +
-          `👑 ${rankName(data.rank)}\n\n`;
-      }
-    );
-
-    return reply(
-      sock,
-      jid,
-      result,
-      message
-    );
-  }
-
-  // ===================================================
-  // RANKS
-  // ===================================================
-
-  if (
-    command === "رتب" ||
-    command === "ranks"
-  ) {
-    return reply(
-      sock,
-      jid,
-      `👑 رتب SPOPO
-
-6️⃣ ملاك
-5️⃣ رئيس
-4️⃣ نائب
-3️⃣ مشرف
-2️⃣ مميز
-1️⃣ مواطن`,
-      message
-    );
-  }
-
-  // ===================================================
-  // PROMOTE BOT RANK
-  // ===================================================
-
-  if (
-    command === "ترقية"
-  ) {
-    if (
-      !hasRank(
-        sender,
-        "president"
-      )
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك رتبة رئيس أو أعلى.",
-        message
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    const targetUser =
-      getUser(target);
-
-    if (
-      rankLevel(targetUser.rank) >=
-      rankLevel("president")
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ ما يمكنش تغير رتبة رئيس أو ملاك.",
-        message
-      );
-    }
-
-    targetUser.rank =
-      "moderator";
-
-    saveUsers();
-
-    return reply(
-      sock,
-      jid,
-      `✅ تمت الترقية.
-
-👤 @${target.split("@")[0]}
-👑 الرتبة: مشرف`,
-      message
-    );
-  }
-
-  // ===================================================
-  // DEMOTE
-  // ===================================================
-
-  if (
-    command === "تنزيل"
-  ) {
-    if (
-      !hasRank(
-        sender,
-        "president"
-      )
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك رتبة رئيس أو أعلى.",
-        message
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    const targetUser =
-      getUser(target);
-
-    if (
-      rankLevel(targetUser.rank) >=
-      rankLevel("president")
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ ما يمكنش تنزل رئيس أو ملاك.",
-        message
-      );
-    }
-
-    targetUser.rank =
-      "citizen";
-
-    saveUsers();
-
-    return reply(
-      sock,
-      jid,
-      `✅ تمت إزالة الرتبة.
-
-👤 @${target.split("@")[0]}
-👑 الرتبة: مواطن`,
-      message
-    );
-  }
-
-  // ===================================================
-  // GROUP COMMANDS
-  // ===================================================
-
-  if (!isGroup(jid)) {
-    return;
-  }
-
-  const senderAdmin =
-    await isAdmin(
-      sock,
-      jid,
-      sender
-    );
-
-  const isBotAdmin =
-    await botAdmin(
-      sock,
-      jid
-    );
-
-  // ===================================================
-  // GROUP INFO
-  // ===================================================
-
-  if (
-    command === "معلومات"
-  ) {
-    const metadata =
-      await sock.groupMetadata(jid);
-
-    const admins =
-      metadata.participants.filter(
-        p =>
-          p.admin === "admin" ||
-          p.admin === "superadmin"
-      ).length;
-
-    return reply(
-      sock,
-      jid,
-      `👥 معلومات المجموعة
-
-📛 ${metadata.subject}
-
-👤 الأعضاء:
-${metadata.participants.length}
-
-👑 المشرفين:
-${admins}`,
-      message
-    );
-  }
-
-  // ===================================================
-  // TAG ALL
-  // ===================================================
-
-  if (
-    command === "منشن" ||
-    command === "tagall"
-  ) {
-    if (
-      !senderAdmin &&
-      !hasRank(
-        sender,
-        "moderator"
-      )
-    ) {
-      return reply(
-        sock,
-        jid,
-        "❌ الأمر للمشرفين فقط.",
-        message
-      );
-    }
-
-    const metadata =
-      await sock.groupMetadata(jid);
-
-    const participants =
-      metadata.participants;
-
-    const mentions =
-      participants.map(
-        p => p.id
-      );
-
-    let text =
-      args.length
-        ? args.join(" ")
-        : "📢 انتباه الجميع!";
-
-    text += "\n\n";
-
-    for (const p of participants) {
-      text +=
-        `@${p.id.split("@")[0]} `;
-    }
-
-    return sock.sendMessage(
+    await sock.sendMessage(
       jid,
       {
-        text,
-        mentions
+        text
       },
-      { quoted: message }
+      {
+        quoted: message
+      }
     );
-  }
-
-  // ===================================================
-  // KICK
-  // ===================================================
-
-  if (
-    command === "طرد" ||
-    command === "kick"
-  ) {
-    if (!senderAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin.",
-        message
-      );
-    }
-
-    if (!isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ البوت خاصو يكون Admin.",
-        message
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    await sock.groupParticipantsUpdate(
-      jid,
-      [target],
-      "remove"
-    );
-
-    return reply(
-      sock,
-      jid,
-      `✅ تم طرد @${target.split("@")[0]}.`,
-      message
-    );
-  }
-
-  // ===================================================
-  // ADD
-  // ===================================================
-
-  if (
-    command === "اضف" ||
-    command === "add"
-  ) {
-    if (!senderAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin.",
-        message
-      );
-    }
-
-    if (!isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ البوت خاصو يكون Admin.",
-        message
-      );
-    }
-
-    const number =
-      args[0]?.replace(/\D/g, "");
-
-    if (!number) {
-      return reply(
-        sock,
-        jid,
-        "❌ مثال:\n.اضف 212644140800",
-        message
-      );
-    }
-
-    await sock.groupParticipantsUpdate(
-      jid,
-      [`${number}@s.whatsapp.net`],
-      "add"
-    );
-
-    return reply(
-      sock,
-      jid,
-      `✅ تمت محاولة إضافة @${number}.`,
-      message
-    );
-  }
-
-  // ===================================================
-  // PROMOTE ADMIN
-  // ===================================================
-
-  if (
-    command === "ترقية_ادمن"
-  ) {
-    if (!senderAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin.",
-        message
-      );
-    }
-
-    if (!isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ البوت خاصو يكون Admin.",
-        message
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    await sock.groupParticipantsUpdate(
-      jid,
-      [target],
-      "promote"
-    );
-
-    return reply(
-      sock,
-      jid,
-      `👑 تمت ترقية @${target.split("@")[0]} إلى Admin.`,
-      message
-    );
-  }
-
-  // ===================================================
-  // DEMOTE ADMIN
-  // ===================================================
-
-  if (
-    command === "تنزيل_ادمن"
-  ) {
-    if (!senderAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin.",
-        message
-      );
-    }
-
-    if (!isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ البوت خاصو يكون Admin.",
-        message
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return reply(
-        sock,
-        jid,
-        "❌ منشن الشخص.",
-        message
-      );
-    }
-
-    await sock.groupParticipantsUpdate(
-      jid,
-      [target],
-      "demote"
-    );
-
-    return reply(
-      sock,
-      jid,
-      `⬇️ تمت إزالة Admin من @${target.split("@")[0]}.`,
-      message
-    );
-  }
-
-  // ===================================================
-  // GROUP NAME
-  // ===================================================
-
-  if (
-    command === "اسم"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    const name =
-      args.join(" ").trim();
-
-    if (!name) {
-      return reply(
-        sock,
-        jid,
-        "❌ كتب الاسم الجديد.",
-        message
-      );
-    }
-
-    await sock.groupUpdateSubject(
-      jid,
-      name
-    );
-
-    return reply(
-      sock,
-      jid,
-      "✅ تبدل اسم المجموعة.",
-      message
-    );
-  }
-
-  // ===================================================
-  // DESCRIPTION
-  // ===================================================
-
-  if (
-    command === "وصف"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    const description =
-      args.join(" ").trim();
-
-    if (!description) {
-      return reply(
-        sock,
-        jid,
-        "❌ كتب الوصف الجديد.",
-        message
-      );
-    }
-
-    await sock.groupUpdateDescription(
-      jid,
-      description
-    );
-
-    return reply(
-      sock,
-      jid,
-      "✅ تبدل وصف المجموعة.",
-      message
-    );
-  }
-
-  // ===================================================
-  // LINK
-  // ===================================================
-
-  if (
-    command === "رابط"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    const code =
-      await sock.groupInviteCode(jid);
-
-    return reply(
-      sock,
-      jid,
-      `🔗 رابط المجموعة:
-
-https://chat.whatsapp.com/${code}`,
-      message
-    );
-  }
-
-  // ===================================================
-  // REVOKE LINK
-  // ===================================================
-
-  if (
-    command === "سحب_الرابط"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    await sock.groupRevokeInvite(jid);
-
-    return reply(
-      sock,
-      jid,
-      "✅ تم تغيير رابط المجموعة.",
-      message
-    );
-  }
-
-  // ===================================================
-  // LOCK
-  // ===================================================
-
-  if (
-    command === "قفل"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    await sock.groupSettingUpdate(
-      jid,
-      "announcement"
-    );
-
-    return reply(
-      sock,
-      jid,
-      "🔒 تم قفل المجموعة.",
-      message
-    );
-  }
-
-  // ===================================================
-  // UNLOCK
-  // ===================================================
-
-  if (
-    command === "فتح"
-  ) {
-    if (!senderAdmin || !isBotAdmin) {
-      return reply(
-        sock,
-        jid,
-        "❌ خاصك تكون Admin والبوت حتى هو.",
-        message
-      );
-    }
-
-    await sock.groupSettingUpdate(
-      jid,
-      "not_announcement"
-    );
-
-    return reply(
-      sock,
-      jid,
-      "🔓 تم فتح المجموعة.",
-      message
-    );
+  } catch (error) {
+    console.log("❌ Send error:", error.message);
   }
 }
 
-// =====================================================
-// START BOT
-// =====================================================
+// ================= BOT START =================
+
+let reconnectTimer = null;
+let botStarting = false;
 
 async function startBot() {
+  if (botStarting) return;
+
+  botStarting = true;
+
   try {
-    const {
-      state,
-      saveCreds
-    } = await useMultiFileAuthState(
-      SESSION_DIR
-    );
+    console.log("");
+    console.log("================================");
+    console.log("🤖 SPOPO BOT");
+    console.log("================================");
+    console.log(`📱 NUMBER: ${BOT_NUMBER}`);
+    console.log("🔐 PAIRING CODE: ON");
+    console.log("📷 QR: OFF");
+    console.log("================================");
+    console.log("");
 
-    let version;
-
-    try {
-      const result =
-        await fetchLatestBaileysVersion();
-
-      version = result.version;
-    } catch {
-      version = undefined;
-    }
+    const { state, saveCreds } =
+      await useMultiFileAuthState(SESSION_DIR);
 
     const sock = makeWASocket({
       auth: state,
+      logger: P({
+        level: "silent"
+      }),
 
-      ...(version ? { version } : {}),
-
-      logger,
+      browser: Browsers.macOS("Desktop"),
 
       printQRInTerminal: false,
 
-      browser:
-        Browsers.macOS("Desktop"),
+      generateHighQualityLinkPreview: false,
 
       markOnlineOnConnect: false,
 
-      connectTimeoutMs: 60000,
-
-      defaultQueryTimeoutMs: 60000,
-
-      keepAliveIntervalMs: 25000
+      syncFullHistory: false
     });
 
-    sock.ev.on(
-      "creds.update",
-      saveCreds
-    );
+    let pairingRequested = false;
 
-    // =================================================
-    // PAIRING CODE
-    // =================================================
+    // =========================================
+    // SAVE AUTH
+    // =========================================
 
-    if (!state.creds.registered) {
-      console.log("");
-      console.log(
-        "===================================="
-      );
-      console.log(
-        "🔐 SPOPO BOT PAIRING CODE"
-      );
-      console.log(
-        "📱 NUMBER: 212644140800"
-      );
-      console.log(
-        "===================================="
-      );
+    sock.ev.on("creds.update", saveCreds);
 
-      try {
-        const code =
-          await sock.requestPairingCode(
-            BOT_NUMBER
-          );
-
-        console.log("");
-        console.log(
-          "🔑 PAIRING CODE:"
-        );
-        console.log(code);
-        console.log("");
-        console.log(
-          "WhatsApp > الأجهزة المرتبطة"
-        );
-        console.log(
-          "ربط جهاز > الربط برقم الهاتف"
-        );
-        console.log(
-          "دخل الكود اللي فوق"
-        );
-        console.log("");
-      } catch (error) {
-        console.error(
-          "❌ Pairing Code Error:",
-          error?.message || error
-        );
-      }
-    }
-
-    // =================================================
+    // =========================================
     // CONNECTION
-    // =================================================
+    // =========================================
 
     sock.ev.on(
       "connection.update",
-      ({ connection, lastDisconnect }) => {
-        if (connection === "open") {
-          console.log("");
-          console.log(
-            "===================================="
-          );
-          console.log(
-            "✅ SPOPO BOT CONNECTED"
-          );
-          console.log(
-            "📱 212644140800"
-          );
-          console.log(
-            "🤖 BOT ONLINE"
-          );
-          console.log(
-            "===================================="
-          );
+      async update => {
+        const {
+          connection,
+          lastDisconnect
+        } = update;
+
+        // -------------------------------------
+        // PAIRING CODE
+        // -------------------------------------
+
+        if (
+          connection === "connecting" &&
+          !state.creds.registered &&
+          !pairingRequested
+        ) {
+          pairingRequested = true;
+
+          try {
+            console.log("");
+            console.log("⏳ الاتصال بواتساب...");
+            console.log("⏳ كنوجد Pairing Code...");
+            console.log("");
+
+            // مهم: ننتظرو شوية قبل طلب الكود
+            await delay(2000);
+
+            const code =
+              await sock.requestPairingCode(
+                BOT_NUMBER
+              );
+
+            console.log("");
+            console.log("================================");
+            console.log("🔐 SPOPO BOT PAIRING CODE");
+            console.log("================================");
+            console.log(`📱 NUMBER: ${BOT_NUMBER}`);
+            console.log(`🔑 CODE: ${code}`);
+            console.log("================================");
+            console.log("");
+
+            console.log("📲 دخل لواتساب:");
+            console.log("1️⃣ الإعدادات");
+            console.log("2️⃣ الأجهزة المرتبطة");
+            console.log("3️⃣ ربط جهاز");
+            console.log("4️⃣ الربط برقم الهاتف");
+            console.log("5️⃣ دخل الكود لي فوق");
+            console.log("");
+
+          } catch (error) {
+            console.log("");
+            console.log(
+              "❌ Pairing Code Error:",
+              error?.message || error
+            );
+            console.log("");
+
+            // ما نعاودوش الطلب مباشرة
+            pairingRequested = false;
+          }
         }
 
+        // -------------------------------------
+        // CONNECTED
+        // -------------------------------------
+
+        if (connection === "open") {
+          console.log("");
+          console.log("================================");
+          console.log("✅ SPOPO BOT CONNECTED");
+          console.log("🤖 BOT ONLINE");
+          console.log(`📱 ${BOT_NUMBER}`);
+          console.log("================================");
+          console.log("");
+
+          botStarting = false;
+        }
+
+        // -------------------------------------
+        // CLOSED
+        // -------------------------------------
+
         if (connection === "close") {
-          const status =
+          botStarting = false;
+
+          const statusCode =
             lastDisconnect
               ?.error
               ?.output
               ?.statusCode;
 
+          console.log("");
+          console.log("================================");
+          console.log("⚠️ CONNECTION CLOSED");
+          console.log(
+            `📌 STATUS: ${statusCode || "unknown"}`
+          );
+          console.log("================================");
+          console.log("");
+
+          // Logged out
           if (
-            status ===
-            DisconnectReason.loggedOut
+            statusCode === DisconnectReason.loggedOut
           ) {
             console.log(
-              "❌ Session logged out."
+              "❌ WhatsApp logged out."
             );
+
+            console.log(
+              "⚠️ ما غاديش نعاودو الاتصال تلقائياً."
+            );
+
             return;
           }
 
-          console.log(
-            "🔄 إعادة الاتصال بعد 5 ثواني..."
-          );
+          // -----------------------------------
+          // RECONNECT ONCE
+          // -----------------------------------
 
-          setTimeout(
-            startBot,
-            5000
-          );
+          if (!reconnectTimer) {
+            console.log(
+              "🔄 إعادة الاتصال بعد 7 ثواني..."
+            );
+
+            reconnectTimer = setTimeout(
+              async () => {
+                reconnectTimer = null;
+
+                try {
+                  await startBot();
+                } catch (error) {
+                  console.log(
+                    "❌ Reconnect error:",
+                    error.message
+                  );
+                }
+              },
+              7000
+            );
+          }
         }
       }
     );
 
-    // =================================================
+    // =========================================
     // MESSAGES
-    // =================================================
+    // =========================================
 
     sock.ev.on(
       "messages.upsert",
       async ({ messages }) => {
-        for (const message of messages) {
-          try {
-            if (!message.message) {
-              continue;
+        try {
+          const message = messages?.[0];
+
+          if (!message) return;
+
+          if (message.key?.fromMe) return;
+
+          const jid = message.key.remoteJid;
+
+          if (!jid) return;
+
+          const text = commandText(message);
+
+          if (!text.startsWith(PREFIX)) {
+            return;
+          }
+
+          const args = text
+            .slice(PREFIX.length)
+            .trim()
+            .split(/\s+/);
+
+          const command =
+            (args.shift() || "").toLowerCase();
+
+          const sender =
+            message.key.participant ||
+            jid;
+
+          // إنشاء حساب
+          const user = getUser(sender);
+
+          // =====================================
+          // PING
+          // =====================================
+
+          if (command === "بينغ" ||
+              command === "ping") {
+
+            await reply(
+              sock,
+              jid,
+              "🏓 Pong!\n🤖 SPOPO BOT خدام مزيان.",
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // BOT
+          // =====================================
+
+          if (command === "بوت" ||
+              command === "bot") {
+
+            await reply(
+              sock,
+              jid,
+              "🤖 SPOPO BOT\n\n✅ Online\n⚡ Railway\n🔐 Pairing Code\n📷 QR: OFF",
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // ID
+          // =====================================
+
+          if (command === "ايدي" ||
+              command === "id") {
+
+            await reply(
+              sock,
+              jid,
+              `🆔 ID ديالك:\n${sender}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // MY ACCOUNT
+          // =====================================
+
+          if (
+            command === "حسابي" ||
+            command === "profile"
+          ) {
+            const u = getUser(sender);
+
+            await reply(
+              sock,
+              jid,
+              `👤 حسابك
+
+💰 العملات: ${u.coins}
+⭐ XP: ${u.xp}
+📈 المستوى: ${u.level}
+👑 الرتبة: ${rankName(u.rank)}
+
+🎒 المخزون:
+⭐ VIP: ${u.inventory.vip}
+🎁 هدايا: ${u.inventory.gift}
+🛡️ دروع: ${u.inventory.armor}
+💎 ألماس: ${u.inventory.diamond}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // DAILY
+          // =====================================
+
+          if (
+            command === "يومية" ||
+            command === "daily"
+          ) {
+            const now = Date.now();
+
+            const last =
+              dailyCooldown.get(sender) || 0;
+
+            const cooldown =
+              24 * 60 * 60 * 1000;
+
+            if (now - last < cooldown) {
+              const remaining =
+                cooldown - (now - last);
+
+              const hours =
+                Math.ceil(
+                  remaining /
+                  (60 * 60 * 1000)
+                );
+
+              await reply(
+                sock,
+                jid,
+                `⏳ رجع غداً.\nباقي تقريباً ${hours} ساعة.`,
+                message
+              );
+
+              return;
+            }
+
+            const reward =
+              500 +
+              Math.floor(
+                Math.random() * 500
+              );
+
+            const u = getUser(sender);
+
+            u.coins += reward;
+            u.xp += 20;
+
+            if (u.xp >= u.level * 100) {
+              u.xp = 0;
+              u.level += 1;
+            }
+
+            updateUser(sender, u);
+
+            dailyCooldown.set(
+              sender,
+              now
+            );
+
+            await reply(
+              sock,
+              jid,
+              `🎁 اليومية وصلات!
+
+💰 +${reward} عملة
+⭐ +20 XP
+
+💰 الرصيد: ${u.coins}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // SHOP
+          // =====================================
+
+          if (
+            command === "متجر" ||
+            command === "shop"
+          ) {
+            await reply(
+              sock,
+              jid,
+              `🛒 متجر SPOPO
+
+⭐ vip — ${SHOP.vip.price}
+🎁 gift — ${SHOP.gift.price}
+🛡️ armor — ${SHOP.armor.price}
+💎 diamond — ${SHOP.diamond.price}
+
+طريقة الشراء:
+.شراء vip
+.شراء gift
+.شراء armor
+.شراء diamond`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // BUY
+          // =====================================
+
+          if (
+            command === "شراء" ||
+            command === "buy"
+          ) {
+            const item =
+              (args[0] || "").toLowerCase();
+
+            if (!SHOP[item]) {
+              await reply(
+                sock,
+                jid,
+                "❌ السلعة غير موجودة.\nاستعمل .متجر",
+                message
+              );
+
+              return;
+            }
+
+            const u = getUser(sender);
+
+            if (
+              u.coins <
+              SHOP[item].price
+            ) {
+              await reply(
+                sock,
+                jid,
+                `❌ ما عندكش فلوس كافية.\n💰 عندك: ${u.coins}\n💵 الثمن: ${SHOP[item].price}`,
+                message
+              );
+
+              return;
+            }
+
+            u.coins -= SHOP[item].price;
+
+            if (
+              !u.inventory[item]
+            ) {
+              u.inventory[item] = 0;
+            }
+
+            u.inventory[item]++;
+
+            updateUser(sender, u);
+
+            await reply(
+              sock,
+              jid,
+              `✅ شريتي ${SHOP[item].name}
+
+💰 -${SHOP[item].price}
+💰 الرصيد: ${u.coins}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // INVENTORY
+          // =====================================
+
+          if (
+            command === "مخزوني" ||
+            command === "inventory"
+          ) {
+            const u = getUser(sender);
+
+            await reply(
+              sock,
+              jid,
+              `🎒 المخزون ديالك
+
+⭐ VIP: ${u.inventory.vip}
+🎁 Gift: ${u.inventory.gift}
+🛡️ Armor: ${u.inventory.armor}
+💎 Diamond: ${u.inventory.diamond}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // TRANSFER
+          // =====================================
+
+          if (
+            command === "تحويل" ||
+            command === "transfer"
+          ) {
+            const mentioned =
+              extractMention(message);
+
+            const target =
+              mentioned[0] ||
+              quotedParticipant(message);
+
+            const amount =
+              parseInt(args[0]);
+
+            if (!target) {
+              await reply(
+                sock,
+                jid,
+                "❌ منشن الشخص لي بغيتي تحول ليه.",
+                message
+              );
+
+              return;
             }
 
             if (
-              message.key.remoteJid ===
-              "status@broadcast"
+              !amount ||
+              amount <= 0
             ) {
-              continue;
+              await reply(
+                sock,
+                jid,
+                "❌ دخل مبلغ صحيح.",
+                message
+              );
+
+              return;
             }
 
-            await handleCommand(
+            const from =
+              getUser(sender);
+
+            if (
+              from.coins < amount
+            ) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما عندكش هاد المبلغ.",
+                message
+              );
+
+              return;
+            }
+
+            const to =
+              getUser(target);
+
+            from.coins -= amount;
+            to.coins += amount;
+
+            updateUser(
+              sender,
+              from
+            );
+
+            updateUser(
+              target,
+              to
+            );
+
+            await reply(
               sock,
+              jid,
+              `✅ تم التحويل
+
+💰 المبلغ: ${amount}
+👤 إلى: @${normalizeNumber(target)}
+💰 رصيدك: ${from.coins}`,
               message
             );
-          } catch (error) {
-            console.error(
-              "Command Error:",
-              error?.message || error
-            );
+
+            return;
           }
+
+          // =====================================
+          // LEADERBOARD
+          // =====================================
+
+          if (
+            command === "متصدرين" ||
+            command === "top"
+          ) {
+            const users =
+              loadUsers();
+
+            const top =
+              Object.entries(users)
+                .sort(
+                  (a, b) =>
+                    (b[1].coins || 0) -
+                    (a[1].coins || 0)
+                )
+                .slice(0, 10);
+
+            let result =
+              "🏆 متصدرين SPOPO\n\n";
+
+            top.forEach(
+              ([id, u], index) => {
+                result +=
+                  `${index + 1}. @${normalizeNumber(id)} — ${u.coins || 0} 💰\n`;
+              }
+            );
+
+            await reply(
+              sock,
+              jid,
+              result,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // RANKS
+          // =====================================
+
+          if (
+            command === "رتب" ||
+            command === "ranks"
+          ) {
+            await reply(
+              sock,
+              jid,
+              `👑 رتب SPOPO
+
+1️⃣ مواطن
+2️⃣ مميز
+3️⃣ مشرف
+4️⃣ نائب
+5️⃣ رئيس
+6️⃣ ملاك`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // UPGRADE RANK
+          // =====================================
+
+          if (
+            command === "ترقية" ||
+            command === "promote"
+          ) {
+            if (
+              !hasRank(sender, 5)
+            ) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما عندكش الصلاحية.",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              extractMention(message)[0] ||
+              quotedParticipant(message);
+
+            const newRank =
+              args[0]?.toLowerCase();
+
+            if (!target || !newRank) {
+              await reply(
+                sock,
+                jid,
+                "❌ مثال:\n.ترقية @user vip",
+                message
+              );
+
+              return;
+            }
+
+            if (!RANKS[newRank]) {
+              await reply(
+                sock,
+                jid,
+                "❌ الرتبة غير موجودة.\nاستعمل .رتب",
+                message
+              );
+
+              return;
+            }
+
+            const targetUser =
+              getUser(target);
+
+            targetUser.rank =
+              newRank;
+
+            updateUser(
+              target,
+              targetUser
+            );
+
+            await reply(
+              sock,
+              jid,
+              `✅ تمت الترقية إلى ${rankName(newRank)}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // DEMOTE
+          // =====================================
+
+          if (
+            command === "تنزيل" ||
+            command === "demote"
+          ) {
+            if (
+              !hasRank(sender, 5)
+            ) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما عندكش الصلاحية.",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              extractMention(message)[0] ||
+              quotedParticipant(message);
+
+            if (!target) {
+              await reply(
+                sock,
+                jid,
+                "❌ منشن الشخص.",
+                message
+              );
+
+              return;
+            }
+
+            const targetUser =
+              getUser(target);
+
+            targetUser.rank =
+              "citizen";
+
+            updateUser(
+              target,
+              targetUser
+            );
+
+            await reply(
+              sock,
+              jid,
+              "✅ رجعناه مواطن.",
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // GROUP CHECK
+          // =====================================
+
+          if (!jid.endsWith("@g.us")) {
+            return;
+          }
+
+          const group =
+            await getGroupMetadata(
+              sock,
+              jid
+            );
+
+          if (!group) {
+            await reply(
+              sock,
+              jid,
+              "❌ ما قدرتش نجيب معلومات المجموعة.",
+              message
+            );
+
+            return;
+          }
+
+          const senderIsAdmin =
+            await isGroupAdmin(
+              sock,
+              sender,
+              group
+            );
+
+          // =====================================
+          // GROUP INFO
+          // =====================================
+
+          if (
+            command === "معلومات" ||
+            command === "groupinfo"
+          ) {
+            await reply(
+              sock,
+              jid,
+              `📋 معلومات المجموعة
+
+👥 الأعضاء: ${group.participants.length}
+👑 المشرفين: ${
+                group.participants.filter(
+                  p => p.admin
+                ).length
+              }
+
+📝 الاسم:
+${group.subject}
+
+🆔:
+${jid}`,
+              message
+            );
+
+            return;
+          }
+
+          // =====================================
+          // MENTION ALL
+          // =====================================
+
+          if (
+            command === "منشن" ||
+            command === "منشن_الكل"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const mentions =
+              group.participants.map(
+                p => p.id
+              );
+
+            const text =
+              args.join(" ") ||
+              "📢 منشن للجميع";
+
+            await sock.sendMessage(
+              jid,
+              {
+                text,
+                mentions
+              },
+              {
+                quoted: message
+              }
+            );
+
+            return;
+          }
+
+          // =====================================
+          // KICK
+          // =====================================
+
+          if (
+            command === "طرد" ||
+            command === "kick"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              extractMention(message)[0] ||
+              quotedParticipant(message);
+
+            if (!target) {
+              await reply(
+                sock,
+                jid,
+                "❌ منشن الشخص لي بغيتي تطرد.",
+                message
+              );
+
+              return;
+            }
+
+            if (
+              normalizeNumber(target) ===
+              BOT_NUMBER
+            ) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما نقدرش نطرد راسي 😂",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupParticipantsUpdate(
+                jid,
+                [target],
+                "remove"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تم الطرد.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نطردو. تأكد أن البوت أدمن.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // ADD
+          // =====================================
+
+          if (
+            command === "اضف" ||
+            command === "add"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const number =
+              (args[0] || "")
+                .replace(/\D/g, "");
+
+            if (!number) {
+              await reply(
+                sock,
+                jid,
+                "❌ مثال:\n.اضف 2126xxxxxxxx",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              `${number}@s.whatsapp.net`;
+
+            try {
+              await sock.groupParticipantsUpdate(
+                jid,
+                [target],
+                "add"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تم إرسال طلب الإضافة.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نضيفو.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // PROMOTE ADMIN
+          // =====================================
+
+          if (
+            command === "ترقية_ادمن" ||
+            command === "promoteadmin"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              extractMention(message)[0] ||
+              quotedParticipant(message);
+
+            if (!target) {
+              await reply(
+                sock,
+                jid,
+                "❌ منشن الشخص.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupParticipantsUpdate(
+                jid,
+                [target],
+                "promote"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تمت الترقية لأدمن.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ فشلت العملية.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // DEMOTE ADMIN
+          // =====================================
+
+          if (
+            command === "تنزيل_ادمن" ||
+            command === "demoteadmin"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const target =
+              extractMention(message)[0] ||
+              quotedParticipant(message);
+
+            if (!target) {
+              await reply(
+                sock,
+                jid,
+                "❌ منشن الشخص.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupParticipantsUpdate(
+                jid,
+                [target],
+                "demote"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تنحى من الأدمن.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ فشلت العملية.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // CHANGE GROUP NAME
+          // =====================================
+
+          if (
+            command === "اسم" ||
+            command === "setname"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const name =
+              args.join(" ");
+
+            if (!name) {
+              await reply(
+                sock,
+                jid,
+                "❌ دخل الاسم الجديد.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupUpdateSubject(
+                jid,
+                name
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تبدل اسم المجموعة.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نبدل الاسم.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // DESCRIPTION
+          // =====================================
+
+          if (
+            command === "وصف" ||
+            command === "setdesc"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            const description =
+              args.join(" ");
+
+            if (!description) {
+              await reply(
+                sock,
+                jid,
+                "❌ دخل الوصف الجديد.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupUpdateDescription(
+                jid,
+                description
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تبدل وصف المجموعة.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نبدل الوصف.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // GROUP LINK
+          // =====================================
+
+          if (
+            command === "رابط" ||
+            command === "link"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              const code =
+                await sock.groupInviteCode(
+                  jid
+                );
+
+              await reply(
+                sock,
+                jid,
+                `🔗 رابط المجموعة:
+
+https://chat.whatsapp.com/${code}`,
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نجيب الرابط.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // REVOKE LINK
+          // =====================================
+
+          if (
+            command === "سحب_الرابط" ||
+            command === "revoke"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupRevokeInvite(
+                jid
+              );
+
+              await reply(
+                sock,
+                jid,
+                "✅ تسحب رابط المجموعة القديم.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نسحب الرابط.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // LOCK GROUP
+          // =====================================
+
+          if (
+            command === "قفل" ||
+            command === "lock"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupSettingUpdate(
+                jid,
+                "announcement"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "🔒 المجموعة تسدات.\nغير الأدمن يقدر يكتب.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نقفل المجموعة.",
+                message
+              );
+            }
+
+            return;
+          }
+
+          // =====================================
+          // UNLOCK GROUP
+          // =====================================
+
+          if (
+            command === "فتح" ||
+            command === "unlock"
+          ) {
+            if (!senderIsAdmin) {
+              await reply(
+                sock,
+                jid,
+                "❌ خاصك تكون أدمن.",
+                message
+              );
+
+              return;
+            }
+
+            try {
+              await sock.groupSettingUpdate(
+                jid,
+                "not_announcement"
+              );
+
+              await reply(
+                sock,
+                jid,
+                "🔓 المجموعة تحلات.\nالكل يقدر يكتب.",
+                message
+              );
+            } catch (error) {
+              await reply(
+                sock,
+                jid,
+                "❌ ما قدرتش نفتح المجموعة.",
+                message
+              );
+            }
+
+            return;
+          }
+
+        } catch (error) {
+          console.log(
+            "❌ Message Error:",
+            error?.message || error
+          );
         }
       }
     );
 
   } catch (error) {
-    console.error(
-      "❌ BOT ERROR:",
+    botStarting = false;
+
+    console.log("");
+    console.log(
+      "❌ START BOT ERROR:",
       error?.message || error
     );
+    console.log("");
 
-    setTimeout(
-      startBot,
-      10000
-    );
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(
+        async () => {
+          reconnectTimer = null;
+
+          try {
+            await startBot();
+          } catch (err) {
+            console.log(
+              "❌ Restart error:",
+              err.message
+            );
+          }
+        },
+        7000
+      );
+    }
   }
 }
 
-// =====================================================
-// RAILWAY SERVER
-// =====================================================
-
-const server =
-  http.createServer(
-    (req, res) => {
-      res.writeHead(
-        200,
-        {
-          "Content-Type":
-            "text/plain; charset=utf-8"
-        }
-      );
-
-      res.end(
-        "SPOPO BOT ONLINE ✅"
-      );
-    }
-  );
-
-server.listen(
-  PORT,
-  () => {
-    console.log(
-      `🌐 Server running on port ${PORT}`
-    );
-  }
-);
-
-// =====================================================
-// RUN
-// =====================================================
-
-console.log("");
-console.log(
-  "🤖 SPOPO BOT STARTING..."
-);
-console.log(
-  "📱 NUMBER: 212644140800"
-);
-console.log(
-  "🔐 QR DISABLED"
-);
-console.log(
-  "🔑 PAIRING CODE ENABLED"
-);
-console.log("");
+// ================= START =================
 
 startBot();
