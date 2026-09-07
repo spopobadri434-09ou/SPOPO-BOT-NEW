@@ -10,12 +10,10 @@ import fs from "fs";
 import path from "path";
 import http from "http";
 
-// =====================================================
+// =================================================
 // SPOPO BOT
-// Railway + WhatsApp Pairing Code
-// =====================================================
-
-// ================= CONFIG =================
+// QR CODE VERSION
+// =================================================
 
 const BOT_NUMBER = "212644140800";
 const OWNER_NUMBER = "212644140800";
@@ -28,7 +26,9 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 const PORT = process.env.PORT || 3000;
 
-// ================= DIRECTORIES =================
+// =================================================
+// FOLDERS
+// =================================================
 
 if (!fs.existsSync(SESSION_DIR)) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -42,7 +42,9 @@ if (!fs.existsSync(USERS_FILE)) {
   fs.writeFileSync(USERS_FILE, "{}", "utf8");
 }
 
-// ================= HTTP SERVER =================
+// =================================================
+// RAILWAY SERVER
+// =================================================
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, {
@@ -53,10 +55,12 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🌐 Server running on port ${PORT}`);
+  console.log(`🌐 Railway server running on port ${PORT}`);
 });
 
-// ================= DATABASE =================
+// =================================================
+// DATABASE
+// =================================================
 
 function loadUsers() {
   try {
@@ -64,13 +68,19 @@ function loadUsers() {
       fs.writeFileSync(USERS_FILE, "{}", "utf8");
     }
 
-    const data = fs.readFileSync(USERS_FILE, "utf8");
+    const data = fs.readFileSync(
+      USERS_FILE,
+      "utf8"
+    );
 
-    if (!data.trim()) return {};
+    if (!data.trim()) {
+      return {};
+    }
 
     return JSON.parse(data);
+
   } catch (error) {
-    console.log("⚠️ خطأ في قراءة users.json");
+    console.log("⚠️ Database read error");
     return {};
   }
 }
@@ -83,29 +93,39 @@ function saveUsers(users) {
       "utf8"
     );
   } catch (error) {
-    console.log("❌ خطأ في حفظ البيانات:", error.message);
+    console.log(
+      "❌ Database save error:",
+      error.message
+    );
   }
 }
 
-// ================= USERS =================
+// =================================================
+// USER SYSTEM
+// =================================================
+
+function createUser() {
+  return {
+    coins: 100,
+    xp: 0,
+    level: 1,
+
+    rank: "citizen",
+
+    inventory: {
+      vip: 0,
+      gift: 0,
+      armor: 0,
+      diamond: 0
+    }
+  };
+}
 
 function ensureUser(jid) {
   const users = loadUsers();
 
   if (!users[jid]) {
-    users[jid] = {
-      coins: 100,
-      xp: 0,
-      level: 1,
-      rank: "citizen",
-      inventory: {
-        vip: 0,
-        gift: 0,
-        armor: 0,
-        diamond: 0
-      }
-    };
-
+    users[jid] = createUser();
     saveUsers(users);
   }
 
@@ -116,33 +136,17 @@ function getUser(jid) {
   return ensureUser(jid);
 }
 
-function updateUser(jid, data) {
+function updateUser(jid, user) {
   const users = loadUsers();
 
-  if (!users[jid]) {
-    users[jid] = {
-      coins: 100,
-      xp: 0,
-      level: 1,
-      rank: "citizen",
-      inventory: {
-        vip: 0,
-        gift: 0,
-        armor: 0,
-        diamond: 0
-      }
-    };
-  }
-
-  users[jid] = {
-    ...users[jid],
-    ...data
-  };
+  users[jid] = user;
 
   saveUsers(users);
 }
 
-// ================= RANKS =================
+// =================================================
+// RANKS
+// =================================================
 
 const RANKS = {
   citizen: {
@@ -184,7 +188,9 @@ function rankLevel(rank) {
   return RANKS[rank]?.level || 1;
 }
 
-// ================= NORMALIZE JID =================
+// =================================================
+// NUMBER
+// =================================================
 
 function normalizeNumber(jid = "") {
   return jid
@@ -194,88 +200,51 @@ function normalizeNumber(jid = "") {
 }
 
 function isOwner(jid) {
-  return normalizeNumber(jid) === BOT_NUMBER ||
-         normalizeNumber(jid) === OWNER_NUMBER;
+  const number = normalizeNumber(jid);
+
+  return (
+    number === BOT_NUMBER ||
+    number === OWNER_NUMBER
+  );
 }
 
-function hasRank(jid, requiredLevel) {
-  if (isOwner(jid)) return true;
+function hasRank(jid, level) {
+  if (isOwner(jid)) {
+    return true;
+  }
 
   const user = getUser(jid);
 
-  return rankLevel(user.rank) >= requiredLevel;
+  return rankLevel(user.rank) >= level;
 }
 
-// ================= GROUP ADMIN =================
+// =================================================
+// GROUP ADMIN
+// =================================================
 
-async function isGroupAdmin(sock, jid, groupMetadata) {
-  if (isOwner(jid)) return true;
-
-  const participant = groupMetadata.participants.find(
-    p => normalizeNumber(p.id) === normalizeNumber(jid)
-  );
-
-  return participant?.admin === "admin" ||
-         participant?.admin === "superadmin";
-}
-
-async function getGroupMetadata(sock, jid) {
-  try {
-    return await sock.groupMetadata(jid);
-  } catch (error) {
-    return null;
+function isAdmin(jid, metadata) {
+  if (isOwner(jid)) {
+    return true;
   }
-}
 
-// ================= MENTION =================
+  const participant =
+    metadata.participants.find(
+      p =>
+        normalizeNumber(p.id) ===
+        normalizeNumber(jid)
+    );
 
-function extractMention(message) {
-  const context =
-    message?.extendedTextMessage?.contextInfo;
-
-  if (!context) return [];
-
-  return context.mentionedJid || [];
-}
-
-function quotedParticipant(message) {
   return (
-    message?.extendedTextMessage?.contextInfo
-      ?.participant || null
+    participant?.admin === "admin" ||
+    participant?.admin === "superadmin"
   );
 }
 
-// ================= SHOP =================
+// =================================================
+// MESSAGE TEXT
+// =================================================
 
-const SHOP = {
-  vip: {
-    price: 1000,
-    name: "⭐ مميز"
-  },
-
-  gift: {
-    price: 250,
-    name: "🎁 هدية"
-  },
-
-  armor: {
-    price: 500,
-    name: "🛡️ درع"
-  },
-
-  diamond: {
-    price: 2500,
-    name: "💎 ألماسة"
-  }
-};
-
-// ================= DAILY =================
-
-const dailyCooldown = new Map();
-
-// ================= COMMAND HELPER =================
-
-function commandText(message) {
+function getText(message) {
   return (
     message?.conversation ||
     message?.extendedTextMessage?.text ||
@@ -285,9 +254,36 @@ function commandText(message) {
   ).trim();
 }
 
-// ================= SEND =================
+// =================================================
+// MENTIONS
+// =================================================
 
-async function reply(sock, jid, text, message) {
+function getMentions(message) {
+  return (
+    message?.extendedTextMessage
+      ?.contextInfo
+      ?.mentionedJid || []
+  );
+}
+
+function getQuotedUser(message) {
+  return (
+    message?.extendedTextMessage
+      ?.contextInfo
+      ?.participant || null
+  );
+}
+
+// =================================================
+// REPLY
+// =================================================
+
+async function reply(
+  sock,
+  jid,
+  text,
+  message
+) {
   try {
     await sock.sendMessage(
       jid,
@@ -299,148 +295,183 @@ async function reply(sock, jid, text, message) {
       }
     );
   } catch (error) {
-    console.log("❌ Send error:", error.message);
+    console.log(
+      "❌ Send error:",
+      error.message
+    );
   }
 }
 
-// ================= BOT START =================
+// =================================================
+// SHOP
+// =================================================
+
+const SHOP = {
+  vip: {
+    name: "⭐ مميز",
+    price: 1000
+  },
+
+  gift: {
+    name: "🎁 هدية",
+    price: 250
+  },
+
+  armor: {
+    name: "🛡️ درع",
+    price: 500
+  },
+
+  diamond: {
+    name: "💎 ألماسة",
+    price: 2500
+  }
+};
+
+// =================================================
+// DAILY
+// =================================================
+
+const daily = new Map();
+
+// =================================================
+// BOT
+// =================================================
 
 let reconnectTimer = null;
-let botStarting = false;
+let starting = false;
 
 async function startBot() {
-  if (botStarting) return;
 
-  botStarting = true;
+  if (starting) {
+    return;
+  }
+
+  starting = true;
 
   try {
+
     console.log("");
     console.log("================================");
     console.log("🤖 SPOPO BOT");
     console.log("================================");
     console.log(`📱 NUMBER: ${BOT_NUMBER}`);
-    console.log("🔐 PAIRING CODE: ON");
-    console.log("📷 QR: OFF");
+    console.log("📷 QR CODE: ON");
+    console.log("🔐 PAIRING CODE: OFF");
     console.log("================================");
     console.log("");
 
-    const { state, saveCreds } =
-      await useMultiFileAuthState(SESSION_DIR);
+    const {
+      state,
+      saveCreds
+    } = await useMultiFileAuthState(
+      SESSION_DIR
+    );
 
     const sock = makeWASocket({
+
       auth: state,
+
       logger: P({
         level: "silent"
       }),
 
-      browser: Browsers.macOS("Desktop"),
+      browser: Browsers.macOS(
+        "Desktop"
+      ),
 
-      printQRInTerminal: false,
+      // ========================================
+      // QR CODE
+      // ========================================
 
-      generateHighQualityLinkPreview: false,
+      printQRInTerminal: true,
 
-      markOnlineOnConnect: false,
+      generateHighQualityLinkPreview:
+        false,
 
-      syncFullHistory: false
+      markOnlineOnConnect:
+        false,
+
+      syncFullHistory:
+        false
     });
 
-    let pairingRequested = false;
+    // ========================================
+    // SAVE SESSION
+    // ========================================
 
-    // =========================================
-    // SAVE AUTH
-    // =========================================
+    sock.ev.on(
+      "creds.update",
+      saveCreds
+    );
 
-    sock.ev.on("creds.update", saveCreds);
-
-    // =========================================
+    // ========================================
     // CONNECTION
-    // =========================================
+    // ========================================
 
     sock.ev.on(
       "connection.update",
       async update => {
+
         const {
           connection,
           lastDisconnect
         } = update;
 
-        // -------------------------------------
-        // PAIRING CODE
-        // -------------------------------------
+        // ======================================
+        // CONNECTING
+        // ======================================
 
         if (
-          connection === "connecting" &&
-          !state.creds.registered &&
-          !pairingRequested
+          connection === "connecting"
         ) {
-          pairingRequested = true;
 
-          try {
-            console.log("");
-            console.log("⏳ الاتصال بواتساب...");
-            console.log("⏳ كنوجد Pairing Code...");
-            console.log("");
-
-            // مهم: ننتظرو شوية قبل طلب الكود
-            await delay(2000);
-
-            const code =
-              await sock.requestPairingCode(
-                BOT_NUMBER
-              );
-
-            console.log("");
-            console.log("================================");
-            console.log("🔐 SPOPO BOT PAIRING CODE");
-            console.log("================================");
-            console.log(`📱 NUMBER: ${BOT_NUMBER}`);
-            console.log(`🔑 CODE: ${code}`);
-            console.log("================================");
-            console.log("");
-
-            console.log("📲 دخل لواتساب:");
-            console.log("1️⃣ الإعدادات");
-            console.log("2️⃣ الأجهزة المرتبطة");
-            console.log("3️⃣ ربط جهاز");
-            console.log("4️⃣ الربط برقم الهاتف");
-            console.log("5️⃣ دخل الكود لي فوق");
-            console.log("");
-
-          } catch (error) {
-            console.log("");
-            console.log(
-              "❌ Pairing Code Error:",
-              error?.message || error
-            );
-            console.log("");
-
-            // ما نعاودوش الطلب مباشرة
-            pairingRequested = false;
-          }
+          console.log(
+            "⏳ Connecting to WhatsApp..."
+          );
         }
 
-        // -------------------------------------
-        // CONNECTED
-        // -------------------------------------
+        // ======================================
+        // OPEN
+        // ======================================
 
-        if (connection === "open") {
-          console.log("");
-          console.log("================================");
-          console.log("✅ SPOPO BOT CONNECTED");
-          console.log("🤖 BOT ONLINE");
-          console.log(`📱 ${BOT_NUMBER}`);
-          console.log("================================");
-          console.log("");
+        if (
+          connection === "open"
+        ) {
 
-          botStarting = false;
+          starting = false;
+
+          console.log("");
+          console.log(
+            "================================"
+          );
+          console.log(
+            "✅ SPOPO BOT CONNECTED"
+          );
+          console.log(
+            "🤖 BOT ONLINE"
+          );
+          console.log(
+            `📱 ${BOT_NUMBER}`
+          );
+          console.log(
+            "📷 QR CODE: ACTIVE"
+          );
+          console.log(
+            "================================"
+          );
+          console.log("");
         }
 
-        // -------------------------------------
-        // CLOSED
-        // -------------------------------------
+        // ======================================
+        // CLOSE
+        // ======================================
 
-        if (connection === "close") {
-          botStarting = false;
+        if (
+          connection === "close"
+        ) {
+
+          starting = false;
 
           const statusCode =
             lastDisconnect
@@ -449,198 +480,262 @@ async function startBot() {
               ?.statusCode;
 
           console.log("");
-          console.log("================================");
-          console.log("⚠️ CONNECTION CLOSED");
           console.log(
-            `📌 STATUS: ${statusCode || "unknown"}`
+            "================================"
           );
-          console.log("================================");
+          console.log(
+            "⚠️ WHATSAPP CONNECTION CLOSED"
+          );
+          console.log(
+            `📌 STATUS: ${
+              statusCode || "unknown"
+            }`
+          );
+          console.log(
+            "================================"
+          );
           console.log("");
 
-          // Logged out
+          // LOGGED OUT
           if (
-            statusCode === DisconnectReason.loggedOut
+            statusCode ===
+            DisconnectReason.loggedOut
           ) {
+
             console.log(
-              "❌ WhatsApp logged out."
+              "❌ WhatsApp session logged out."
             );
 
             console.log(
-              "⚠️ ما غاديش نعاودو الاتصال تلقائياً."
+              "⚠️ Login again with QR."
             );
 
             return;
           }
 
-          // -----------------------------------
-          // RECONNECT ONCE
-          // -----------------------------------
-
+          // RECONNECT
           if (!reconnectTimer) {
+
             console.log(
-              "🔄 إعادة الاتصال بعد 7 ثواني..."
+              "🔄 Reconnecting in 7 seconds..."
             );
 
-            reconnectTimer = setTimeout(
-              async () => {
-                reconnectTimer = null;
+            reconnectTimer =
+              setTimeout(
+                async () => {
 
-                try {
-                  await startBot();
-                } catch (error) {
-                  console.log(
-                    "❌ Reconnect error:",
-                    error.message
-                  );
-                }
-              },
-              7000
-            );
+                  reconnectTimer = null;
+
+                  try {
+                    await startBot();
+                  } catch (error) {
+
+                    console.log(
+                      "❌ Reconnect error:",
+                      error.message
+                    );
+                  }
+
+                },
+                7000
+              );
           }
         }
       }
     );
 
-    // =========================================
+    // ========================================
     // MESSAGES
-    // =========================================
+    // ========================================
 
     sock.ev.on(
       "messages.upsert",
-      async ({ messages }) => {
+      async ({
+        messages
+      }) => {
+
         try {
-          const message = messages?.[0];
 
-          if (!message) return;
+          const message =
+            messages?.[0];
 
-          if (message.key?.fromMe) return;
-
-          const jid = message.key.remoteJid;
-
-          if (!jid) return;
-
-          const text = commandText(message);
-
-          if (!text.startsWith(PREFIX)) {
+          if (!message) {
             return;
           }
 
-          const args = text
-            .slice(PREFIX.length)
-            .trim()
-            .split(/\s+/);
+          if (
+            message.key?.fromMe
+          ) {
+            return;
+          }
+
+          const jid =
+            message.key.remoteJid;
+
+          if (!jid) {
+            return;
+          }
+
+          const text =
+            getText(message);
+
+          if (
+            !text.startsWith(
+              PREFIX
+            )
+          ) {
+            return;
+          }
+
+          const parts =
+            text
+              .slice(PREFIX.length)
+              .trim()
+              .split(/\s+/);
 
           const command =
-            (args.shift() || "").toLowerCase();
+            (
+              parts.shift() || ""
+            ).toLowerCase();
+
+          const args = parts;
 
           const sender =
             message.key.participant ||
             jid;
 
-          // إنشاء حساب
-          const user = getUser(sender);
+          // Create user
+          getUser(sender);
 
-          // =====================================
+          // ====================================
           // PING
-          // =====================================
+          // ====================================
 
-          if (command === "بينغ" ||
-              command === "ping") {
+          if (
+            command === "بينغ" ||
+            command === "ping"
+          ) {
 
             await reply(
               sock,
               jid,
-              "🏓 Pong!\n🤖 SPOPO BOT خدام مزيان.",
+              "🏓 Pong!\n🤖 SPOPO BOT خدام.",
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // BOT
-          // =====================================
+          // ====================================
 
-          if (command === "بوت" ||
-              command === "bot") {
+          if (
+            command === "بوت" ||
+            command === "bot"
+          ) {
 
             await reply(
               sock,
               jid,
-              "🤖 SPOPO BOT\n\n✅ Online\n⚡ Railway\n🔐 Pairing Code\n📷 QR: OFF",
+              `🤖 SPOPO BOT
+
+✅ Online
+⚡ Railway
+📷 QR Code: ON
+🔐 Pairing Code: OFF`,
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // ID
-          // =====================================
+          // ====================================
 
-          if (command === "ايدي" ||
-              command === "id") {
+          if (
+            command === "ايدي" ||
+            command === "id"
+          ) {
 
             await reply(
               sock,
               jid,
-              `🆔 ID ديالك:\n${sender}`,
+              `🆔 ID ديالك:
+
+${sender}`,
               message
             );
 
             return;
           }
 
-          // =====================================
-          // MY ACCOUNT
-          // =====================================
+          // ====================================
+          // ACCOUNT
+          // ====================================
 
           if (
             command === "حسابي" ||
             command === "profile"
           ) {
-            const u = getUser(sender);
+
+            const user =
+              getUser(sender);
 
             await reply(
               sock,
               jid,
               `👤 حسابك
 
-💰 العملات: ${u.coins}
-⭐ XP: ${u.xp}
-📈 المستوى: ${u.level}
-👑 الرتبة: ${rankName(u.rank)}
+💰 العملات: ${user.coins}
+⭐ XP: ${user.xp}
+📈 المستوى: ${user.level}
+👑 الرتبة: ${rankName(
+                user.rank
+              )}
 
 🎒 المخزون:
-⭐ VIP: ${u.inventory.vip}
-🎁 هدايا: ${u.inventory.gift}
-🛡️ دروع: ${u.inventory.armor}
-💎 ألماس: ${u.inventory.diamond}`,
+
+⭐ VIP: ${user.inventory.vip}
+🎁 Gift: ${user.inventory.gift}
+🛡️ Armor: ${user.inventory.armor}
+💎 Diamond: ${user.inventory.diamond}`,
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // DAILY
-          // =====================================
+          // ====================================
 
           if (
             command === "يومية" ||
             command === "daily"
           ) {
-            const now = Date.now();
+
+            const now =
+              Date.now();
 
             const last =
-              dailyCooldown.get(sender) || 0;
+              daily.get(sender) || 0;
 
             const cooldown =
-              24 * 60 * 60 * 1000;
+              24 *
+              60 *
+              60 *
+              1000;
 
-            if (now - last < cooldown) {
+            if (
+              now - last <
+              cooldown
+            ) {
+
               const remaining =
-                cooldown - (now - last);
+                cooldown -
+                (now - last);
 
               const hours =
                 Math.ceil(
@@ -651,7 +746,10 @@ async function startBot() {
               await reply(
                 sock,
                 jid,
-                `⏳ رجع غداً.\nباقي تقريباً ${hours} ساعة.`,
+                `⏳ مازال خاصك تصبر.
+
+باقي تقريباً:
+${hours} ساعة`,
                 message
               );
 
@@ -664,19 +762,27 @@ async function startBot() {
                 Math.random() * 500
               );
 
-            const u = getUser(sender);
+            const user =
+              getUser(sender);
 
-            u.coins += reward;
-            u.xp += 20;
+            user.coins += reward;
+            user.xp += 20;
 
-            if (u.xp >= u.level * 100) {
-              u.xp = 0;
-              u.level += 1;
+            if (
+              user.xp >=
+              user.level * 100
+            ) {
+
+              user.xp = 0;
+              user.level++;
             }
 
-            updateUser(sender, u);
+            updateUser(
+              sender,
+              user
+            );
 
-            dailyCooldown.set(
+            daily.set(
               sender,
               now
             );
@@ -689,32 +795,35 @@ async function startBot() {
 💰 +${reward} عملة
 ⭐ +20 XP
 
-💰 الرصيد: ${u.coins}`,
+💰 الرصيد:
+${user.coins}`,
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // SHOP
-          // =====================================
+          // ====================================
 
           if (
             command === "متجر" ||
             command === "shop"
           ) {
+
             await reply(
               sock,
               jid,
               `🛒 متجر SPOPO
 
-⭐ vip — ${SHOP.vip.price}
-🎁 gift — ${SHOP.gift.price}
-🛡️ armor — ${SHOP.armor.price}
-💎 diamond — ${SHOP.diamond.price}
+⭐ vip = ${SHOP.vip.price}
+🎁 gift = ${SHOP.gift.price}
+🛡️ armor = ${SHOP.armor.price}
+💎 diamond = ${SHOP.diamond.price}
 
-طريقة الشراء:
+مثال:
+
 .شراء vip
 .شراء gift
 .شراء armor
@@ -725,18 +834,22 @@ async function startBot() {
             return;
           }
 
-          // =====================================
+          // ====================================
           // BUY
-          // =====================================
+          // ====================================
 
           if (
             command === "شراء" ||
             command === "buy"
           ) {
+
             const item =
-              (args[0] || "").toLowerCase();
+              (
+                args[0] || ""
+              ).toLowerCase();
 
             if (!SHOP[item]) {
+
               await reply(
                 sock,
                 jid,
@@ -747,91 +860,104 @@ async function startBot() {
               return;
             }
 
-            const u = getUser(sender);
+            const user =
+              getUser(sender);
 
             if (
-              u.coins <
+              user.coins <
               SHOP[item].price
             ) {
+
               await reply(
                 sock,
                 jid,
-                `❌ ما عندكش فلوس كافية.\n💰 عندك: ${u.coins}\n💵 الثمن: ${SHOP[item].price}`,
+                `❌ العملات ما كافياش.
+
+💰 عندك:
+${user.coins}
+
+💵 الثمن:
+${SHOP[item].price}`,
                 message
               );
 
               return;
             }
 
-            u.coins -= SHOP[item].price;
+            user.coins -=
+              SHOP[item].price;
 
-            if (
-              !u.inventory[item]
-            ) {
-              u.inventory[item] = 0;
-            }
+            user.inventory[item]++;
 
-            u.inventory[item]++;
-
-            updateUser(sender, u);
+            updateUser(
+              sender,
+              user
+            );
 
             await reply(
               sock,
               jid,
-              `✅ شريتي ${SHOP[item].name}
+              `✅ تم الشراء!
 
+🛒 ${SHOP[item].name}
 💰 -${SHOP[item].price}
-💰 الرصيد: ${u.coins}`,
+
+💰 الرصيد:
+${user.coins}`,
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // INVENTORY
-          // =====================================
+          // ====================================
 
           if (
             command === "مخزوني" ||
             command === "inventory"
           ) {
-            const u = getUser(sender);
+
+            const user =
+              getUser(sender);
 
             await reply(
               sock,
               jid,
-              `🎒 المخزون ديالك
+              `🎒 مخزونك
 
-⭐ VIP: ${u.inventory.vip}
-🎁 Gift: ${u.inventory.gift}
-🛡️ Armor: ${u.inventory.armor}
-💎 Diamond: ${u.inventory.diamond}`,
+⭐ VIP: ${user.inventory.vip}
+🎁 Gift: ${user.inventory.gift}
+🛡️ Armor: ${user.inventory.armor}
+💎 Diamond: ${user.inventory.diamond}`,
               message
             );
 
             return;
           }
 
-          // =====================================
+          // ====================================
           // TRANSFER
-          // =====================================
+          // ====================================
 
           if (
             command === "تحويل" ||
             command === "transfer"
           ) {
-            const mentioned =
-              extractMention(message);
+
+            const mentions =
+              getMentions(message);
 
             const target =
-              mentioned[0] ||
-              quotedParticipant(message);
+              mentions[0] ||
+              getQuotedUser(message);
 
             const amount =
               parseInt(args[0]);
 
             if (!target) {
+
               await reply(
                 sock,
                 jid,
@@ -846,6 +972,7 @@ async function startBot() {
               !amount ||
               amount <= 0
             ) {
+
               await reply(
                 sock,
                 jid,
@@ -860,8 +987,10 @@ async function startBot() {
               getUser(sender);
 
             if (
-              from.coins < amount
+              from.coins <
+              amount
             ) {
+
               await reply(
                 sock,
                 jid,
@@ -891,25 +1020,33 @@ async function startBot() {
             await reply(
               sock,
               jid,
-              `✅ تم التحويل
+              `✅ تم التحويل!
 
-💰 المبلغ: ${amount}
-👤 إلى: @${normalizeNumber(target)}
-💰 رصيدك: ${from.coins}`,
+💰 المبلغ:
+${amount}
+
+👤 إلى:
+@${normalizeNumber(
+                target
+              )}
+
+💰 رصيدك:
+${from.coins}`,
               message
             );
 
             return;
           }
 
-          // =====================================
-          // LEADERBOARD
-          // =====================================
+          // ====================================
+          // TOP
+          // ====================================
 
           if (
             command === "متصدرين" ||
             command === "top"
           ) {
+
             const users =
               loadUsers();
 
@@ -926,9 +1063,12 @@ async function startBot() {
               "🏆 متصدرين SPOPO\n\n";
 
             top.forEach(
-              ([id, u], index) => {
+              ([id, user], index) => {
+
                 result +=
-                  `${index + 1}. @${normalizeNumber(id)} — ${u.coins || 0} 💰\n`;
+                  `${index + 1}. @${normalizeNumber(
+                    id
+                  )} — ${user.coins || 0} 💰\n`;
               }
             );
 
@@ -942,14 +1082,15 @@ async function startBot() {
             return;
           }
 
-          // =====================================
+          // ====================================
           // RANKS
-          // =====================================
+          // ====================================
 
           if (
             command === "رتب" ||
             command === "ranks"
           ) {
+
             await reply(
               sock,
               jid,
@@ -967,188 +1108,55 @@ async function startBot() {
             return;
           }
 
-          // =====================================
-          // UPGRADE RANK
-          // =====================================
+          // ====================================
+          // GROUP ONLY
+          // ====================================
 
           if (
-            command === "ترقية" ||
-            command === "promote"
+            !jid.endsWith(
+              "@g.us"
+            )
           ) {
-            if (
-              !hasRank(sender, 5)
-            ) {
-              await reply(
-                sock,
-                jid,
-                "❌ ما عندكش الصلاحية.",
-                message
-              );
-
-              return;
-            }
-
-            const target =
-              extractMention(message)[0] ||
-              quotedParticipant(message);
-
-            const newRank =
-              args[0]?.toLowerCase();
-
-            if (!target || !newRank) {
-              await reply(
-                sock,
-                jid,
-                "❌ مثال:\n.ترقية @user vip",
-                message
-              );
-
-              return;
-            }
-
-            if (!RANKS[newRank]) {
-              await reply(
-                sock,
-                jid,
-                "❌ الرتبة غير موجودة.\nاستعمل .رتب",
-                message
-              );
-
-              return;
-            }
-
-            const targetUser =
-              getUser(target);
-
-            targetUser.rank =
-              newRank;
-
-            updateUser(
-              target,
-              targetUser
-            );
-
-            await reply(
-              sock,
-              jid,
-              `✅ تمت الترقية إلى ${rankName(newRank)}`,
-              message
-            );
-
             return;
           }
 
-          // =====================================
-          // DEMOTE
-          // =====================================
-
-          if (
-            command === "تنزيل" ||
-            command === "demote"
-          ) {
-            if (
-              !hasRank(sender, 5)
-            ) {
-              await reply(
-                sock,
-                jid,
-                "❌ ما عندكش الصلاحية.",
-                message
-              );
-
-              return;
-            }
-
-            const target =
-              extractMention(message)[0] ||
-              quotedParticipant(message);
-
-            if (!target) {
-              await reply(
-                sock,
-                jid,
-                "❌ منشن الشخص.",
-                message
-              );
-
-              return;
-            }
-
-            const targetUser =
-              getUser(target);
-
-            targetUser.rank =
-              "citizen";
-
-            updateUser(
-              target,
-              targetUser
-            );
-
-            await reply(
-              sock,
-              jid,
-              "✅ رجعناه مواطن.",
-              message
-            );
-
-            return;
-          }
-
-          // =====================================
-          // GROUP CHECK
-          // =====================================
-
-          if (!jid.endsWith("@g.us")) {
-            return;
-          }
-
-          const group =
-            await getGroupMetadata(
-              sock,
+          const metadata =
+            await sock.groupMetadata(
               jid
             );
 
-          if (!group) {
-            await reply(
-              sock,
-              jid,
-              "❌ ما قدرتش نجيب معلومات المجموعة.",
-              message
-            );
-
-            return;
-          }
-
-          const senderIsAdmin =
-            await isGroupAdmin(
-              sock,
+          const admin =
+            isAdmin(
               sender,
-              group
+              metadata
             );
 
-          // =====================================
+          // ====================================
           // GROUP INFO
-          // =====================================
+          // ====================================
 
           if (
             command === "معلومات" ||
             command === "groupinfo"
           ) {
+
             await reply(
               sock,
               jid,
               `📋 معلومات المجموعة
 
-👥 الأعضاء: ${group.participants.length}
-👑 المشرفين: ${
-                group.participants.filter(
-                  p => p.admin
-                ).length
-              }
-
 📝 الاسم:
-${group.subject}
+${metadata.subject}
+
+👥 الأعضاء:
+${metadata.participants.length}
+
+👑 الأدمنية:
+${
+  metadata.participants.filter(
+    p => p.admin
+  ).length
+}
 
 🆔:
 ${jid}`,
@@ -1158,15 +1166,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // MENTION ALL
-          // =====================================
+          // ====================================
 
           if (
             command === "منشن" ||
             command === "منشن_الكل"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1178,18 +1188,19 @@ ${jid}`,
             }
 
             const mentions =
-              group.participants.map(
+              metadata.participants.map(
                 p => p.id
               );
 
-            const text =
+            const mentionText =
               args.join(" ") ||
               "📢 منشن للجميع";
 
             await sock.sendMessage(
               jid,
               {
-                text,
+                text:
+                  mentionText,
                 mentions
               },
               {
@@ -1200,15 +1211,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // KICK
-          // =====================================
+          // ====================================
 
           if (
             command === "طرد" ||
             command === "kick"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1220,10 +1233,11 @@ ${jid}`,
             }
 
             const target =
-              extractMention(message)[0] ||
-              quotedParticipant(message);
+              getMentions(message)[0] ||
+              getQuotedUser(message);
 
             if (!target) {
+
               await reply(
                 sock,
                 jid,
@@ -1235,13 +1249,15 @@ ${jid}`,
             }
 
             if (
-              normalizeNumber(target) ===
-              BOT_NUMBER
+              normalizeNumber(
+                target
+              ) === BOT_NUMBER
             ) {
+
               await reply(
                 sock,
                 jid,
-                "❌ ما نقدرش نطرد راسي 😂",
+                "😂 ما نقدرش نطرد راسي.",
                 message
               );
 
@@ -1249,6 +1265,7 @@ ${jid}`,
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1261,11 +1278,13 @@ ${jid}`,
                 "✅ تم الطرد.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
-                "❌ ما قدرتش نطردو. تأكد أن البوت أدمن.",
+                "❌ تأكد أن البوت أدمن.",
                 message
               );
             }
@@ -1273,15 +1292,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // ADD
-          // =====================================
+          // ====================================
 
           if (
             command === "اضف" ||
             command === "add"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1293,10 +1314,15 @@ ${jid}`,
             }
 
             const number =
-              (args[0] || "")
-                .replace(/\D/g, "");
+              (
+                args[0] || ""
+              ).replace(
+                /\D/g,
+                ""
+              );
 
             if (!number) {
+
               await reply(
                 sock,
                 jid,
@@ -1311,6 +1337,7 @@ ${jid}`,
               `${number}@s.whatsapp.net`;
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1320,10 +1347,12 @@ ${jid}`,
               await reply(
                 sock,
                 jid,
-                "✅ تم إرسال طلب الإضافة.",
+                "✅ تمت محاولة إضافة العضو.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1335,15 +1364,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // PROMOTE ADMIN
-          // =====================================
+          // ====================================
 
           if (
             command === "ترقية_ادمن" ||
             command === "promoteadmin"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1355,10 +1386,11 @@ ${jid}`,
             }
 
             const target =
-              extractMention(message)[0] ||
-              quotedParticipant(message);
+              getMentions(message)[0] ||
+              getQuotedUser(message);
 
             if (!target) {
+
               await reply(
                 sock,
                 jid,
@@ -1370,6 +1402,7 @@ ${jid}`,
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1379,10 +1412,12 @@ ${jid}`,
               await reply(
                 sock,
                 jid,
-                "✅ تمت الترقية لأدمن.",
+                "✅ تمت ترقية العضو لأدمن.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1394,15 +1429,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // DEMOTE ADMIN
-          // =====================================
+          // ====================================
 
           if (
             command === "تنزيل_ادمن" ||
             command === "demoteadmin"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1414,10 +1451,11 @@ ${jid}`,
             }
 
             const target =
-              extractMention(message)[0] ||
-              quotedParticipant(message);
+              getMentions(message)[0] ||
+              getQuotedUser(message);
 
             if (!target) {
+
               await reply(
                 sock,
                 jid,
@@ -1429,6 +1467,7 @@ ${jid}`,
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1438,10 +1477,12 @@ ${jid}`,
               await reply(
                 sock,
                 jid,
-                "✅ تنحى من الأدمن.",
+                "✅ تمت إزالة الأدمن.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1453,15 +1494,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
-          // CHANGE GROUP NAME
-          // =====================================
+          // ====================================
+          // GROUP NAME
+          // ====================================
 
           if (
             command === "اسم" ||
             command === "setname"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1476,6 +1519,7 @@ ${jid}`,
               args.join(" ");
 
             if (!name) {
+
               await reply(
                 sock,
                 jid,
@@ -1487,6 +1531,7 @@ ${jid}`,
             }
 
             try {
+
               await sock.groupUpdateSubject(
                 jid,
                 name
@@ -1498,7 +1543,9 @@ ${jid}`,
                 "✅ تبدل اسم المجموعة.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1510,15 +1557,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // DESCRIPTION
-          // =====================================
+          // ====================================
 
           if (
             command === "وصف" ||
             command === "setdesc"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1533,6 +1582,7 @@ ${jid}`,
               args.join(" ");
 
             if (!description) {
+
               await reply(
                 sock,
                 jid,
@@ -1544,6 +1594,7 @@ ${jid}`,
             }
 
             try {
+
               await sock.groupUpdateDescription(
                 jid,
                 description
@@ -1555,7 +1606,9 @@ ${jid}`,
                 "✅ تبدل وصف المجموعة.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1567,15 +1620,17 @@ ${jid}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // GROUP LINK
-          // =====================================
+          // ====================================
 
           if (
             command === "رابط" ||
             command === "link"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1587,6 +1642,7 @@ ${jid}`,
             }
 
             try {
+
               const code =
                 await sock.groupInviteCode(
                   jid
@@ -1600,7 +1656,9 @@ ${jid}`,
 https://chat.whatsapp.com/${code}`,
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1612,15 +1670,17 @@ https://chat.whatsapp.com/${code}`,
             return;
           }
 
-          // =====================================
+          // ====================================
           // REVOKE LINK
-          // =====================================
+          // ====================================
 
           if (
             command === "سحب_الرابط" ||
             command === "revoke"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1632,6 +1692,7 @@ https://chat.whatsapp.com/${code}`,
             }
 
             try {
+
               await sock.groupRevokeInvite(
                 jid
               );
@@ -1639,10 +1700,12 @@ https://chat.whatsapp.com/${code}`,
               await reply(
                 sock,
                 jid,
-                "✅ تسحب رابط المجموعة القديم.",
+                "✅ تسحب الرابط القديم.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1654,15 +1717,17 @@ https://chat.whatsapp.com/${code}`,
             return;
           }
 
-          // =====================================
-          // LOCK GROUP
-          // =====================================
+          // ====================================
+          // LOCK
+          // ====================================
 
           if (
             command === "قفل" ||
             command === "lock"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1674,6 +1739,7 @@ https://chat.whatsapp.com/${code}`,
             }
 
             try {
+
               await sock.groupSettingUpdate(
                 jid,
                 "announcement"
@@ -1682,10 +1748,12 @@ https://chat.whatsapp.com/${code}`,
               await reply(
                 sock,
                 jid,
-                "🔒 المجموعة تسدات.\nغير الأدمن يقدر يكتب.",
+                "🔒 المجموعة تسدات.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1697,15 +1765,17 @@ https://chat.whatsapp.com/${code}`,
             return;
           }
 
-          // =====================================
-          // UNLOCK GROUP
-          // =====================================
+          // ====================================
+          // UNLOCK
+          // ====================================
 
           if (
             command === "فتح" ||
             command === "unlock"
           ) {
-            if (!senderIsAdmin) {
+
+            if (!admin) {
+
               await reply(
                 sock,
                 jid,
@@ -1717,6 +1787,7 @@ https://chat.whatsapp.com/${code}`,
             }
 
             try {
+
               await sock.groupSettingUpdate(
                 jid,
                 "not_announcement"
@@ -1725,10 +1796,12 @@ https://chat.whatsapp.com/${code}`,
               await reply(
                 sock,
                 jid,
-                "🔓 المجموعة تحلات.\nالكل يقدر يكتب.",
+                "🔓 المجموعة تحلات.",
                 message
               );
+
             } catch (error) {
+
               await reply(
                 sock,
                 jid,
@@ -1741,44 +1814,54 @@ https://chat.whatsapp.com/${code}`,
           }
 
         } catch (error) {
+
           console.log(
             "❌ Message Error:",
-            error?.message || error
+            error?.message ||
+            error
           );
         }
       }
     );
 
   } catch (error) {
-    botStarting = false;
+
+    starting = false;
 
     console.log("");
     console.log(
-      "❌ START BOT ERROR:",
-      error?.message || error
+      "❌ START ERROR:",
+      error?.message ||
+      error
     );
     console.log("");
 
     if (!reconnectTimer) {
-      reconnectTimer = setTimeout(
-        async () => {
-          reconnectTimer = null;
 
-          try {
-            await startBot();
-          } catch (err) {
-            console.log(
-              "❌ Restart error:",
-              err.message
-            );
-          }
-        },
-        7000
-      );
+      reconnectTimer =
+        setTimeout(
+          async () => {
+
+            reconnectTimer = null;
+
+            try {
+              await startBot();
+            } catch (err) {
+              console.log(
+                "❌ Restart error:",
+                err.message
+              );
+            }
+
+          },
+          7000
+        );
     }
   }
 }
 
-// ================= START =================
+// =================================================
+// START
+// =================================================
 
 startBot();
