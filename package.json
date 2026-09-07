@@ -1,7 +1,9 @@
 {
   "name": "spopo-bot",
   "version": "1.0.0",
+  "description": "SPOPO BOT - WhatsApp Group Security, Ranks, Economy and Shop",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
