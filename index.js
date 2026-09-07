@@ -27,7 +27,7 @@ if (!fs.existsSync(USERS_FILE)) {
 }
 
 /* =========================
-   RAILWAY SERVER
+   RAILWAY
 ========================= */
 
 http.createServer((req, res) => {
@@ -37,7 +37,7 @@ http.createServer((req, res) => {
 
   res.end("SPOPO BOT ONLINE");
 }).listen(PORT, "0.0.0.0", () => {
-  console.log(`🌐 Railway server running on port ${PORT}`);
+  console.log(`🌐 Railway PORT: ${PORT}`);
 });
 
 /* =========================
@@ -46,8 +46,14 @@ http.createServer((req, res) => {
 
 function loadUsers() {
   try {
-    const data = fs.readFileSync(USERS_FILE, "utf8");
-    return data.trim() ? JSON.parse(data) : {};
+    const data = fs.readFileSync(
+      USERS_FILE,
+      "utf8"
+    );
+
+    return data.trim()
+      ? JSON.parse(data)
+      : {};
   } catch {
     return {};
   }
@@ -67,6 +73,7 @@ function newUser() {
     xp: 0,
     level: 1,
     rank: "citizen",
+
     inventory: {
       vip: 0,
       gift: 0,
@@ -89,7 +96,9 @@ function getUser(jid) {
 
 function updateUser(jid, user) {
   const users = loadUsers();
+
   users[jid] = user;
+
   saveUsers(users);
 }
 
@@ -128,6 +137,15 @@ const RANKS = {
     level: 6
   }
 };
+
+const RANK_ORDER = [
+  "citizen",
+  "vip",
+  "moderator",
+  "deputy",
+  "president",
+  "owner"
+];
 
 function rankName(rank) {
   return RANKS[rank]?.name || "مواطن";
@@ -191,39 +209,59 @@ function getText(message) {
 
 function getMentions(message) {
   return (
-    message?.extendedTextMessage?.contextInfo
+    message
+      ?.extendedTextMessage
+      ?.contextInfo
       ?.mentionedJid || []
   );
 }
 
 function getQuotedUser(message) {
   return (
-    message?.extendedTextMessage?.contextInfo
+    message
+      ?.extendedTextMessage
+      ?.contextInfo
       ?.participant || null
   );
 }
 
-async function reply(sock, jid, text, message) {
+async function reply(
+  sock,
+  jid,
+  text,
+  message
+) {
   try {
     await sock.sendMessage(
       jid,
-      { text },
-      { quoted: message }
+      {
+        text
+      },
+      {
+        quoted: message
+      }
     );
   } catch (error) {
     console.log(
-      "❌ Send error:",
+      "❌ Send Error:",
       error?.message || error
     );
   }
 }
 
-function isAdmin(jid, metadata) {
-  if (isOwner(jid)) return true;
+function isAdmin(
+  jid,
+  metadata
+) {
+  if (isOwner(jid)) {
+    return true;
+  }
 
   const participant =
     metadata.participants.find(
-      p => numberOf(p.id) === numberOf(jid)
+      p =>
+        numberOf(p.id) ===
+        numberOf(jid)
     );
 
   return (
@@ -239,11 +277,11 @@ function isAdmin(jid, metadata) {
 const daily = new Map();
 
 /* =========================
-   BOT
+   START BOT
 ========================= */
 
-let reconnectTimer = null;
 let starting = false;
+let reconnectTimer = null;
 
 async function startBot() {
   if (starting) return;
@@ -252,99 +290,119 @@ async function startBot() {
 
   try {
     console.log("");
-    console.log("================================");
+    console.log("==============================");
     console.log("🤖 SPOPO BOT");
-    console.log(`📱 NUMBER: ${BOT_NUMBER}`);
+    console.log(
+      `📱 NUMBER: ${BOT_NUMBER}`
+    );
     console.log("📷 QR CODE: ON");
     console.log("🔐 PAIRING CODE: OFF");
-    console.log("================================");
+    console.log("==============================");
     console.log("");
 
     const {
       state,
       saveCreds
-    } = await useMultiFileAuthState(
-      SESSION_DIR
-    );
+    } =
+      await useMultiFileAuthState(
+        SESSION_DIR
+      );
 
-    const sock = makeWASocket({
-      auth: state,
+    const sock =
+      makeWASocket({
+        auth: state,
 
-      logger: P({
-        level: "silent"
-      }),
+        logger: P({
+          level: "silent"
+        }),
 
-      browser: Browsers.macOS("Desktop"),
+        browser:
+          Browsers.macOS(
+            "Desktop"
+          ),
 
-      printQRInTerminal: false,
+        /*
+         * WhatsApp/Baileys لم يعد
+         * يطبع QR تلقائياً.
+         */
+        printQRInTerminal: false,
 
-      generateHighQualityLinkPreview: false,
+        generateHighQualityLinkPreview:
+          false,
 
-      markOnlineOnConnect: false,
+        markOnlineOnConnect:
+          false,
 
-      syncFullHistory: false
-    });
+        syncFullHistory:
+          false
+      });
 
     sock.ev.on(
       "creds.update",
       saveCreds
     );
 
-    /* =========================
+    /* =====================
        CONNECTION
-    ========================= */
+    ===================== */
 
     sock.ev.on(
       "connection.update",
       async update => {
+
         const {
           connection,
           lastDisconnect,
           qr
         } = update;
 
-        /* QR */
-
+        /*
+         * QR صغير
+         */
         if (qr) {
-          console.log("");
-          console.log(
-            "================================"
-          );
-          console.log(
-            "📷 SCAN THIS QR CODE"
-          );
-          console.log(
-            "================================"
-          );
-          console.log("");
-
-          qrcode.generate(qr, {
-            small: true
-          });
 
           console.log("");
+          console.log(
+            "========== QR =========="
+          );
+
+          qrcode.generate(
+            qr,
+            {
+              small: true
+            }
+          );
+
+          console.log(
+            "======== END QR ========"
+          );
+
           console.log(
             "📱 WhatsApp > الأجهزة المرتبطة > ربط جهاز"
           );
+
           console.log("");
         }
 
-        /* CONNECTING */
+        if (
+          connection ===
+          "connecting"
+        ) {
 
-        if (connection === "connecting") {
           console.log(
             "⏳ WhatsApp كيتاصل..."
           );
         }
 
-        /* OPEN */
+        if (
+          connection === "open"
+        ) {
 
-        if (connection === "open") {
           starting = false;
 
           console.log("");
           console.log(
-            "================================"
+            "=============================="
           );
           console.log(
             "✅ SPOPO BOT CONNECTED"
@@ -356,14 +414,15 @@ async function startBot() {
             "📷 QR LOGIN SUCCESS"
           );
           console.log(
-            "================================"
+            "=============================="
           );
           console.log("");
         }
 
-        /* CLOSE */
+        if (
+          connection === "close"
+        ) {
 
-        if (connection === "close") {
           starting = false;
 
           const status =
@@ -382,69 +441,153 @@ async function startBot() {
             status ===
             DisconnectReason.loggedOut
           ) {
+
             console.log(
-              "❌ WhatsApp session logged out."
+              "❌ Session logged out."
             );
 
             return;
           }
 
-          if (!reconnectTimer) {
-            reconnectTimer = setTimeout(
-              async () => {
-                reconnectTimer = null;
+          if (
+            !reconnectTimer
+          ) {
 
-                await startBot();
-              },
-              7000
-            );
+            reconnectTimer =
+              setTimeout(
+                async () => {
+
+                  reconnectTimer =
+                    null;
+
+                  await startBot();
+
+                },
+                7000
+              );
           }
         }
       }
     );
 
-    /* =========================
+    /* =====================
        MESSAGES
-    ========================= */
+    ===================== */
 
     sock.ev.on(
       "messages.upsert",
-      async ({ messages }) => {
+      async ({
+        messages
+      }) => {
+
         try {
-          const message = messages?.[0];
 
-          if (!message) return;
+          const message =
+            messages?.[0];
 
-          if (message.key?.fromMe) return;
+          if (
+            !message ||
+            message.key?.fromMe
+          ) {
+            return;
+          }
 
           const jid =
-            message.key.remoteJid;
+            message.key
+              .remoteJid;
 
           if (!jid) return;
 
           const text =
             getText(message);
 
-          if (!text.startsWith(PREFIX)) {
+          if (
+            !text.startsWith(
+              PREFIX
+            )
+          ) {
             return;
           }
 
-          const parts = text
-            .slice(PREFIX.length)
-            .trim()
-            .split(/\s+/);
+          const parts =
+            text
+              .slice(
+                PREFIX.length
+              )
+              .trim()
+              .split(/\s+/);
 
           const command =
-            (parts.shift() || "")
-              .toLowerCase();
+            (
+              parts.shift() ||
+              ""
+            ).toLowerCase();
 
           const args = parts;
 
           const sender =
-            message.key.participant ||
+            message.key
+              .participant ||
             jid;
 
           getUser(sender);
+
+          /* =====================
+             HELP
+          ===================== */
+
+          if (
+            [
+              "مساعدة",
+              "اوامر",
+              "help",
+              "menu"
+            ].includes(command)
+          ) {
+
+            return reply(
+              sock,
+              jid,
+
+`🤖 قائمة أوامر SPOPO
+
+📌 أساسية:
+.بينغ
+.بوت
+.ايدي
+.مساعدة
+
+💰 اقتصاد:
+.حسابي
+.يومية
+.متجر
+.شراء vip
+.مخزوني
+.تحويل 100 + منشن
+.متصدرين
+
+👑 رتب:
+.رتب
+.ترقية + منشن
+.تنزيل + منشن
+
+👥 المجموعة:
+.معلومات
+.منشن
+.طرد + منشن
+.اضف 2126xxxxxxx
+.ترقية_ادمن + منشن
+.تنزيل_ادمن + منشن
+.اسم الاسم
+.وصف الوصف
+.رابط
+.سحب_الرابط
+.قفل
+.فتح`,
+
+              message
+            );
+          }
 
           /* =====================
              BASIC
@@ -454,6 +597,7 @@ async function startBot() {
             command === "بينغ" ||
             command === "ping"
           ) {
+
             return reply(
               sock,
               jid,
@@ -466,14 +610,18 @@ async function startBot() {
             command === "بوت" ||
             command === "bot"
           ) {
+
             return reply(
               sock,
               jid,
-              "🤖 SPOPO BOT\n\n" +
-              "✅ Online\n" +
-              "⚡ Railway\n" +
-              "📷 QR Code: ON\n" +
-              "🔐 Pairing Code: OFF",
+
+`🤖 SPOPO BOT
+
+✅ Online
+⚡ Railway
+📷 QR: ON
+🔐 Pairing: OFF`,
+
               message
             );
           }
@@ -482,6 +630,7 @@ async function startBot() {
             command === "ايدي" ||
             command === "id"
           ) {
+
             return reply(
               sock,
               jid,
@@ -498,6 +647,7 @@ async function startBot() {
             command === "حسابي" ||
             command === "profile"
           ) {
+
             const u =
               getUser(sender);
 
@@ -531,10 +681,14 @@ async function startBot() {
             command === "يومية" ||
             command === "daily"
           ) {
-            const now = Date.now();
+
+            const now =
+              Date.now();
 
             const last =
-              daily.get(sender) || 0;
+              daily.get(
+                sender
+              ) || 0;
 
             const cooldown =
               24 *
@@ -546,11 +700,14 @@ async function startBot() {
               now - last <
               cooldown
             ) {
+
               const hours =
                 Math.ceil(
                   (
                     cooldown -
-                    (now - last)
+                    (
+                      now - last
+                    )
                   ) /
                   3600000
                 );
@@ -558,7 +715,11 @@ async function startBot() {
               return reply(
                 sock,
                 jid,
-                `⏳ رجع غداً.\nباقي تقريباً ${hours} ساعة.`,
+
+`⏳ رجع غداً.
+
+باقي تقريباً ${hours} ساعة.`,
+
                 message
               );
             }
@@ -569,17 +730,23 @@ async function startBot() {
             const reward =
               500 +
               Math.floor(
-                Math.random() * 500
+                Math.random() *
+                500
               );
 
-            u.coins += reward;
+            u.coins +=
+              reward;
+
             u.xp += 20;
 
-            if (
+            while (
               u.xp >=
               u.level * 100
             ) {
-              u.xp = 0;
+
+              u.xp -=
+                u.level * 100;
+
               u.level++;
             }
 
@@ -601,6 +768,7 @@ async function startBot() {
 
 💰 +${reward} عملة
 ⭐ +20 XP
+📈 المستوى: ${u.level}
 💰 الرصيد: ${u.coins}`,
 
               message
@@ -615,6 +783,7 @@ async function startBot() {
             command === "متجر" ||
             command === "shop"
           ) {
+
             return reply(
               sock,
               jid,
@@ -627,25 +796,27 @@ async function startBot() {
 💎 diamond = ${SHOP.diamond.price}
 
 مثال:
-
 .شراء vip`,
 
               message
             );
           }
 
-          /* BUY */
-
           if (
             command === "شراء" ||
             command === "buy"
           ) {
+
             const item =
               (
-                args[0] || ""
+                args[0] ||
+                ""
               ).toLowerCase();
 
-            if (!SHOP[item]) {
+            if (
+              !SHOP[item]
+            ) {
+
               return reply(
                 sock,
                 jid,
@@ -661,6 +832,7 @@ async function startBot() {
               u.coins <
               SHOP[item].price
             ) {
+
               return reply(
                 sock,
                 jid,
@@ -698,12 +870,17 @@ async function startBot() {
             );
           }
 
-          /* INVENTORY */
+          /* =====================
+             INVENTORY
+          ===================== */
 
           if (
-            command === "مخزوني" ||
-            command === "inventory"
+            command ===
+              "مخزوني" ||
+            command ===
+              "inventory"
           ) {
+
             const u =
               getUser(sender);
 
@@ -722,20 +899,33 @@ async function startBot() {
             );
           }
 
-          /* TRANSFER */
+          /* =====================
+             TRANSFER
+          ===================== */
 
           if (
-            command === "تحويل" ||
-            command === "transfer"
+            command ===
+              "تحويل" ||
+            command ===
+              "transfer"
           ) {
+
             const target =
-              getMentions(message)[0] ||
-              getQuotedUser(message);
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
 
             const amount =
-              parseInt(args[0]);
+              parseInt(
+                args[0],
+                10
+              );
 
             if (!target) {
+
               return reply(
                 sock,
                 jid,
@@ -745,9 +935,12 @@ async function startBot() {
             }
 
             if (
-              !amount ||
+              !Number.isInteger(
+                amount
+              ) ||
               amount <= 0
             ) {
+
               return reply(
                 sock,
                 jid,
@@ -763,6 +956,7 @@ async function startBot() {
               from.coins <
               amount
             ) {
+
               return reply(
                 sock,
                 jid,
@@ -774,8 +968,11 @@ async function startBot() {
             const to =
               getUser(target);
 
-            from.coins -= amount;
-            to.coins += amount;
+            from.coins -=
+              amount;
+
+            to.coins +=
+              amount;
 
             updateUser(
               sender,
@@ -801,29 +998,40 @@ async function startBot() {
             );
           }
 
-          /* TOP */
+          /* =====================
+             TOP
+          ===================== */
 
           if (
-            command === "متصدرين" ||
-            command === "top"
+            command ===
+              "متصدرين" ||
+            command ===
+              "top"
           ) {
-            const users =
-              loadUsers();
 
             const top =
-              Object.entries(users)
+              Object.entries(
+                loadUsers()
+              )
                 .sort(
                   (a, b) =>
                     (b[1].coins || 0) -
                     (a[1].coins || 0)
                 )
-                .slice(0, 10);
+                .slice(
+                  0,
+                  10
+                );
 
             let out =
               "🏆 متصدرين SPOPO\n\n";
 
             top.forEach(
-              ([id, u], i) => {
+              (
+                [id, u],
+                i
+              ) => {
+
                 out +=
                   `${i + 1}. @${numberOf(id)} — ${u.coins || 0} 💰\n`;
               }
@@ -837,12 +1045,17 @@ async function startBot() {
             );
           }
 
-          /* RANKS */
+          /* =====================
+             RANKS
+          ===================== */
 
           if (
-            command === "رتب" ||
-            command === "ranks"
+            command ===
+              "رتب" ||
+            command ===
+              "ranks"
           ) {
+
             return reply(
               sock,
               jid,
@@ -861,11 +1074,179 @@ async function startBot() {
           }
 
           /* =====================
+             PROMOTE
+          ===================== */
+
+          if (
+            command ===
+              "ترقية" ||
+            command ===
+              "promote"
+          ) {
+
+            if (
+              !isOwner(sender)
+            ) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ غير الملاك يقدر يدير هاد العملية.",
+                message
+              );
+            }
+
+            const target =
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
+
+            if (!target) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ منشن الشخص.",
+                message
+              );
+            }
+
+            const u =
+              getUser(target);
+
+            const current =
+              RANKS[u.rank]
+                ?.level || 1;
+
+            if (
+              current >= 5
+            ) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ وصل لأعلى رتبة.",
+                message
+              );
+            }
+
+            u.rank =
+              RANK_ORDER[
+                current
+              ];
+
+            updateUser(
+              target,
+              u
+            );
+
+            return reply(
+              sock,
+              jid,
+
+`✅ تمت الترقية!
+
+👑 الرتبة الجديدة:
+${rankName(u.rank)}`,
+
+              message
+            );
+          }
+
+          /* =====================
+             DEMOTE
+          ===================== */
+
+          if (
+            command ===
+              "تنزيل" ||
+            command ===
+              "demote"
+          ) {
+
+            if (
+              !isOwner(sender)
+            ) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ غير الملاك يقدر يدير هاد العملية.",
+                message
+              );
+            }
+
+            const target =
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
+
+            if (!target) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ منشن الشخص.",
+                message
+              );
+            }
+
+            const u =
+              getUser(target);
+
+            const current =
+              RANKS[u.rank]
+                ?.level || 1;
+
+            if (
+              current <= 1
+            ) {
+
+              return reply(
+                sock,
+                jid,
+                "❌ راه مواطن أصلاً.",
+                message
+              );
+            }
+
+            u.rank =
+              RANK_ORDER[
+                current - 2
+              ];
+
+            updateUser(
+              target,
+              u
+            );
+
+            return reply(
+              sock,
+              jid,
+
+`⬇️ تم التنزيل!
+
+👑 الرتبة:
+${rankName(u.rank)}`,
+
+              message
+            );
+          }
+
+          /* =====================
              GROUP ONLY
           ===================== */
 
           if (
-            !jid.endsWith("@g.us")
+            !jid.endsWith(
+              "@g.us"
+            )
           ) {
             return;
           }
@@ -884,9 +1265,12 @@ async function startBot() {
           /* GROUP INFO */
 
           if (
-            command === "معلومات" ||
-            command === "groupinfo"
+            command ===
+              "معلومات" ||
+            command ===
+              "groupinfo"
           ) {
+
             return reply(
               sock,
               jid,
@@ -905,13 +1289,17 @@ async function startBot() {
             );
           }
 
-          /* MENTION ALL */
+          /* MENTION */
 
           if (
-            command === "منشن" ||
-            command === "منشن_الكل"
+            command ===
+              "منشن" ||
+            command ===
+              "منشن_الكل"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -929,7 +1317,7 @@ async function startBot() {
               args.join(" ") ||
               "📢 منشن للجميع";
 
-            await sock.sendMessage(
+            return sock.sendMessage(
               jid,
               {
                 text: txt,
@@ -939,17 +1327,19 @@ async function startBot() {
                 quoted: message
               }
             );
-
-            return;
           }
 
           /* KICK */
 
           if (
-            command === "طرد" ||
-            command === "kick"
+            command ===
+              "طرد" ||
+            command ===
+              "kick"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -959,10 +1349,15 @@ async function startBot() {
             }
 
             const target =
-              getMentions(message)[0] ||
-              getQuotedUser(message);
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
 
             if (!target) {
+
               return reply(
                 sock,
                 jid,
@@ -972,6 +1367,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -984,7 +1380,9 @@ async function startBot() {
                 "✅ تم الطرد.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -997,10 +1395,14 @@ async function startBot() {
           /* ADD */
 
           if (
-            command === "اضف" ||
-            command === "add"
+            command ===
+              "اضف" ||
+            command ===
+              "add"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1011,13 +1413,15 @@ async function startBot() {
 
             const number =
               (
-                args[0] || ""
+                args[0] ||
+                ""
               ).replace(
                 /\D/g,
                 ""
               );
 
             if (!number) {
+
               return reply(
                 sock,
                 jid,
@@ -1027,6 +1431,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [
@@ -1041,7 +1446,9 @@ async function startBot() {
                 "✅ تمت محاولة إضافة العضو.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1059,7 +1466,9 @@ async function startBot() {
             command ===
               "promoteadmin"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1069,10 +1478,15 @@ async function startBot() {
             }
 
             const target =
-              getMentions(message)[0] ||
-              getQuotedUser(message);
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
 
             if (!target) {
+
               return reply(
                 sock,
                 jid,
@@ -1082,6 +1496,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1094,11 +1509,13 @@ async function startBot() {
                 "✅ تمت الترقية لأدمن.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
-                "❌ فشلت العملية.",
+                "❌ تأكد أن البوت أدمن.",
                 message
               );
             }
@@ -1112,7 +1529,9 @@ async function startBot() {
             command ===
               "demoteadmin"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1122,10 +1541,15 @@ async function startBot() {
             }
 
             const target =
-              getMentions(message)[0] ||
-              getQuotedUser(message);
+              getMentions(
+                message
+              )[0] ||
+              getQuotedUser(
+                message
+              );
 
             if (!target) {
+
               return reply(
                 sock,
                 jid,
@@ -1135,6 +1559,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupParticipantsUpdate(
                 jid,
                 [target],
@@ -1147,11 +1572,13 @@ async function startBot() {
                 "✅ تمت إزالة الأدمن.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
-                "❌ فشلت العملية.",
+                "❌ تأكد أن البوت أدمن.",
                 message
               );
             }
@@ -1160,10 +1587,14 @@ async function startBot() {
           /* GROUP NAME */
 
           if (
-            command === "اسم" ||
-            command === "setname"
+            command ===
+              "اسم" ||
+            command ===
+              "setname"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1176,6 +1607,7 @@ async function startBot() {
               args.join(" ");
 
             if (!name) {
+
               return reply(
                 sock,
                 jid,
@@ -1185,6 +1617,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupUpdateSubject(
                 jid,
                 name
@@ -1196,7 +1629,9 @@ async function startBot() {
                 "✅ تبدل اسم المجموعة.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1209,10 +1644,14 @@ async function startBot() {
           /* DESCRIPTION */
 
           if (
-            command === "وصف" ||
-            command === "setdesc"
+            command ===
+              "وصف" ||
+            command ===
+              "setdesc"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1225,6 +1664,7 @@ async function startBot() {
               args.join(" ");
 
             if (!description) {
+
               return reply(
                 sock,
                 jid,
@@ -1234,6 +1674,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupUpdateDescription(
                 jid,
                 description
@@ -1245,7 +1686,9 @@ async function startBot() {
                 "✅ تبدل وصف المجموعة.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1255,13 +1698,17 @@ async function startBot() {
             }
           }
 
-          /* GROUP LINK */
+          /* LINK */
 
           if (
-            command === "رابط" ||
-            command === "link"
+            command ===
+              "رابط" ||
+            command ===
+              "link"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1271,6 +1718,7 @@ async function startBot() {
             }
 
             try {
+
               const code =
                 await sock.groupInviteCode(
                   jid
@@ -1279,10 +1727,16 @@ async function startBot() {
               return reply(
                 sock,
                 jid,
-                `🔗 رابط المجموعة:\nhttps://chat.whatsapp.com/${code}`,
+
+`🔗 رابط المجموعة:
+
+https://chat.whatsapp.com/${code}`,
+
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1292,7 +1746,7 @@ async function startBot() {
             }
           }
 
-          /* REVOKE LINK */
+          /* REVOKE */
 
           if (
             command ===
@@ -1300,7 +1754,9 @@ async function startBot() {
             command ===
               "revoke"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1310,6 +1766,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupRevokeInvite(
                 jid
               );
@@ -1320,7 +1777,9 @@ async function startBot() {
                 "✅ تسحب الرابط القديم.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1333,10 +1792,14 @@ async function startBot() {
           /* LOCK */
 
           if (
-            command === "قفل" ||
-            command === "lock"
+            command ===
+              "قفل" ||
+            command ===
+              "lock"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1346,6 +1809,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupSettingUpdate(
                 jid,
                 "announcement"
@@ -1357,7 +1821,9 @@ async function startBot() {
                 "🔒 المجموعة تسدات.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1370,10 +1836,14 @@ async function startBot() {
           /* UNLOCK */
 
           if (
-            command === "فتح" ||
-            command === "unlock"
+            command ===
+              "فتح" ||
+            command ===
+              "unlock"
           ) {
+
             if (!admin) {
+
               return reply(
                 sock,
                 jid,
@@ -1383,6 +1853,7 @@ async function startBot() {
             }
 
             try {
+
               await sock.groupSettingUpdate(
                 jid,
                 "not_announcement"
@@ -1394,7 +1865,9 @@ async function startBot() {
                 "🔓 المجموعة تحلات.",
                 message
               );
+
             } catch {
+
               return reply(
                 sock,
                 jid,
@@ -1405,36 +1878,44 @@ async function startBot() {
           }
 
         } catch (error) {
+
           console.log(
             "❌ Message Error:",
-            error?.message || error
+            error?.message ||
+            error
           );
         }
       }
     );
 
   } catch (error) {
+
     starting = false;
 
     console.log(
       "❌ START ERROR:",
-      error?.message || error
+      error?.message ||
+      error
     );
 
-    if (!reconnectTimer) {
-      reconnectTimer = setTimeout(
-        async () => {
-          reconnectTimer = null;
-          await startBot();
-        },
-        7000
-      );
+    if (
+      !reconnectTimer
+    ) {
+
+      reconnectTimer =
+        setTimeout(
+          async () => {
+
+            reconnectTimer =
+              null;
+
+            await startBot();
+
+          },
+          7000
+        );
     }
   }
 }
-
-/* =========================
-   START
-========================= */
 
 startBot();
