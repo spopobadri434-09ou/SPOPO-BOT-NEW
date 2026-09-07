@@ -20,7 +20,7 @@ import fs from "fs";
    ========================= */
 
 const PREFIX = ".";
-const BOT_NUMBER = "212644140800";
+const BOT_NUMBER = "212690948777";
 
 const PORT = process.env.PORT || 3000;
 
