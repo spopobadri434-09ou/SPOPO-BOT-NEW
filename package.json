@@ -1,7 +1,7 @@
 {
-  "name": "spopo-bot-new",
+  "name": "spopo-bot",
   "version": "1.0.0",
-  "description": "SPOPO WhatsApp Bot",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
